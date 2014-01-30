@@ -2180,7 +2180,6 @@ proc ::Yadt::Init_Opts {} {
     # if use_cvs_diff = 0
     #     we retrieve all files from CVS to tmp dir and run "diff" or "diff3" on them
     # if use_cvs_diff = 1
-    #     valid only for diff2
     #     we do not retrieve files, just load their content to widgets and then
     #     run "cvs diff" to get diff information
     #     Note: - local copy of repository is mandatory;
