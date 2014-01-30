@@ -1,0 +1,7 @@
+Here is a Linux tclkit
+
+It is called tclkit-linux to distinguish it in some cases (like kits generation process) with SunOS tclkit.
+
+The original compiled tclkit can be taken from www.equi4.com
+This tclkit is recompiled to make it "more static"
+

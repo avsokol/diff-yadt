@@ -1,0 +1,22 @@
+YaDT executable generation
+
+GUI way:
+
+Linux:
+Run ./starkits/Linux/tclkit-linux ./starkits/kit_maker.tcl
+
+windows:
+Run ./starkits/windows/tclkit.exe ./starkits/kit_maker.tcl
+
+A widget will be opened. Choose platforms you need and press 'Make Kit' button.
+
+
+Console way:
+
+Linux:
+Run ./starkits/Linux/tclkit-linux ./starkits/kit_maker.tcl --cre
+
+windows:
+Run ./starkits/windows/tclkitsh.exe ./starkits/kit_maker.tcl --cre
+
+Follow simple instruction.
