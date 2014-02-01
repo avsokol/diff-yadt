@@ -294,9 +294,31 @@ proc ::Yadt::Exec_To_File { cmd file } {
     set stderr [ lindex $result 1 ]
     set exitcode [ lindex $result 2 ]
 
+    ::Yadt::Ignore_No_CVS_Tag_Error stdout -code exitcode
+
     if { $exitcode != 0 } {
         return -code error "Error while executing <$cmd>:\n$stderr\n$stdout"
     }
+}
+
+#===============================================================================
+
+proc ::Yadt::Ignore_No_CVS_Tag_Error { cvs_out args } {
+
+    upvar $cvs_out out
+
+    set code [ ::CmnTools::Get_Arg -code args -default "" ]
+    if { $code != "" } {
+        upvar $code exitcode
+    }
+
+    # This modification is made to unify behavior
+    # when cvs diff/checkout for -r <revision> and for -r <tag>
+    # as: when we do not have a revision, cvs does not raise an error
+    # but when we do not have a tag, cvs raises an error
+    if [ regsub {^cvs \[checkout|diff aborted\]: no such tag.*$} $out "" out ] {
+        set exitcode 0
+    }    
 }
 
 #===============================================================================
@@ -1845,7 +1867,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.241 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.242 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -2180,10 +2202,11 @@ proc ::Yadt::Init_Opts {} {
     # if use_cvs_diff = 0
     #     we retrieve all files from CVS to tmp dir and run "diff" or "diff3" on them
     # if use_cvs_diff = 1
-    #     valid only for diff2
     #     we do not retrieve files, just load their content to widgets and then
     #     run "cvs diff" to get diff information
-    #     Note: - local copy of repository is mandatory;
+    #     Note: - actual only for diff2,
+    #           for diff3 - use_cvs_diff = 0 will be used anyway
+    #           - local copy of repository is mandatory;
     #           - if called outside of local repository dir - use --chdir to get there,
     #             otherwise "cvs diff" will fail.
     #
@@ -3117,6 +3140,8 @@ proc ::Yadt::CVS_Diff {} {
     set diff_stdout [ lindex $result 0 ]      
     set stderr [ lindex $result 1 ]
     set exitcode [ lindex $result 2 ]
+
+    ::Yadt::Ignore_No_CVS_Tag_Error stderr
 
     if { $exitcode < 0 || $exitcode > 1 || [ regexp "diff aborted" $stderr ] } {
         return -code error "Diff-utility failed:\nExitcode: <$exitcode>\nError message: <$stderr>"
