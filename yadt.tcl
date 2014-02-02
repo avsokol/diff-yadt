@@ -40,7 +40,7 @@ variable ::Yadt::MAP_TITLE_SHORT
 variable ::Yadt::DIFF_CMD
 variable ::Yadt::DIFF3_CMD
 variable ::Yadt::DIFF_IGNORE_SPACES_OPTION "-w"
-variable ::Yadt::CVS_CMD
+variable ::Yadt::VCS_CMD
 
 # widget variables
 variable ::Yadt::WIDGETS
@@ -669,13 +669,110 @@ proc ::Yadt::Prepare_File { filename index { chdir "" } } {
 
 #===============================================================================
 
+proc ::Yadt::Detect_VCS { dir } {
+
+    variable ::Yadt::OPTIONS
+
+    set cvs_dir [ file join $dir CVS ]
+
+    # check for CVS
+    if { [ file exists $cvs_dir ] && [ file isdirectory $cvs_dir ] } {
+	set OPTIONS(vcs) "cvs"
+	return
+    }
+
+    # check for GIT
+    set abs_dir [ file nativename [ file normalize $dir ] ]
+    set dir $abs_dir
+    while { 1 } {
+	if { $dir == "/" } {
+	    break
+	}
+	set git_dir [ file join $dir .git ]
+	if { [ file exists $git_dir ] && [ file isdirectory $git_dir ] } {
+	    set OPTIONS(vcs) "git"
+	    return
+	}
+	set dir [ file dirname $dir ]
+    }
+}
+
+#===============================================================================
+
 proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
+
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::DIFF_FILES
+
+    set dirname [ file dirname $filename ]
+    set tailname [ file tail $filename ]
+
+    switch -- $OPTIONS(vcs) {
+	"cvs" {
+	    set vcs_cmd [ ::Yadt::Prepare_CVS_Cmd $filename $index $rev ]
+	}
+	"git" {
+	    set vcs_cmd [ ::Yadt::Prepare_GIT_Cmd $filename $index $rev ]
+	}
+	default {
+	    return -code error "Sorry, VCS <$vcs> not supported yet"
+	}
+    }
+
+    # output_file_content_to can be -file or -variable:
+    #     -file     : we retrieve file from CVS and save it in tmp dir
+    #                 for further "diff" or "diff3" execution
+    #     -variable : we save file revision content into the variable DIFF_FILES(content,..)
+    #                 this content is needed for loading into the text widget
+    # Note, that for cvs and diff3 (DIFF_TYPE =3) we always use -file for output_file_content_to as
+    # it is not possible to use "cvs diff" for comparing 3 revisions
+
+    set output_file_content_to -variable
+    if { !$OPTIONS(use_cvs_diff) } {
+	set output_file_content_to -file
+    }
+    if { $OPTIONS(vcs) == "cvs" && $DIFF_TYPE == 2 && $OPTIONS(use_cvs_diff) } {
+        set output_file_content_to -variable
+    }
+
+    switch -- $output_file_content_to {
+        -file {
+            set DIFF_FILES(path,$index) [ ::Yadt::Temp_File $tailname ]
+            set DIFF_FILES(tmp,$index) 1
+
+            ::Yadt::Exec_To_File $vcs_cmd $DIFF_FILES(path,$index)
+        }
+        -variable {
+            set result [ ::Yadt::Run_Cmd_As_Pipe $vcs_cmd ]
+            set err  [ lindex $result 1 ]
+            set code [ lindex $result 2 ]
+
+            if { $code < 0 || $code > 1 } {
+                return -code error "diff failed:\ncode: '$code'\nError message: '$err'"
+            }
+
+            set DIFF_FILES(content,$index) [ lindex $result 0 ]
+            set DIFF_FILES(path,$index) ""
+            set DIFF_FILES(tmp,$index) 0
+            set DIFF_FILES(rev,$index) $rev
+            set DIFF_FILES(filename,$index) $filename
+        }
+        default {
+            return -code error "Unsupported value <$output_file_content_to>\
+             for 'output_file_content_to' variable in [ lindex [ info level 0 ] 0 ]"
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Prepare_CVS_Cmd { filename index rev } {
 
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::OPTIONS
-    variable ::Yadt::CVS_CMD
-    global tcl_platform
+    variable ::Yadt::VCS_CMD
 
     set dirname [ file dirname $filename ]
     set tailname [ file tail $filename ]
@@ -756,7 +853,7 @@ proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
 
     if { $rev == "" } {
         # By default we use not HEAD, but Working file revision
-        if { $OPTIONS(ver_from_entry) } {
+        if { $OPTIONS(cvs_ver_from_entry) } {
             set rev [ ::Yadt::Get_Work_Rev_From_Entries $filename ]
         }
         if { $rev < 0  ||  $rev == "" } {
@@ -766,51 +863,29 @@ proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
         }
     }
 
+    set vcs_cmd [ list $VCS_CMD -d $cvsroot -q co -p -r $rev $file_to_compare ]
+
+    return $vcs_cmd
+}
+
+#===============================================================================
+
+proc ::Yadt::Prepare_GIT_Cmd { filename index rev } {
+    
+    variable ::Yadt::DIFF_FILES
+    variable ::Yadt::VCS_CMD
+
+    set tailname [ file tail $filename ]
+
     set DIFF_FILES(label,$index) "$filename (CVS r$rev)"
 
-    # output_file_content_to can be -file or -variable:
-    #     -file     : we retrieve file from CVS and save it in tmp dir
-    #                 for further "diff" or "diff3" execution
-    #     -variable : we save file revision content into the variable DIFF_FILES(content,..)
-    #                 this content is needed for loading into the text widget
-    # Note, that for diff3 (DIFF_TYPE =3) we always use -file for output_file_content_to as
-    # it is not possible to use "cvs diff" for comparing 3 revisions
-
-    set output_file_content_to -file
-    if { $DIFF_TYPE == 2 && $OPTIONS(use_cvs_diff) } {
-        set output_file_content_to -variable
+    if { $rev == "" } {
+	set rev "HEAD"
     }
 
-    set cvscmd [ list $CVS_CMD -d $cvsroot -q co -p -r $rev $file_to_compare ]
+    set vcs_cmd [ list $VCS_CMD show $rev:$tailname ]
 
-    switch -- $output_file_content_to {
-        -file {
-            set DIFF_FILES(path,$index) [ ::Yadt::Temp_File $tailname ]
-            set DIFF_FILES(tmp,$index) 1
-
-            ::Yadt::Exec_To_File $cvscmd $DIFF_FILES(path,$index)
-        }
-        -variable {
-
-            set result [ ::Yadt::Run_Cmd_As_Pipe $cvscmd ]
-            set err  [ lindex $result 1 ]
-            set code [ lindex $result 2 ]
-
-            if { $code < 0 || $code > 1 } {
-                return -code error "diff failed:\ncode: '$code'\nError message: '$err'"
-            }
-
-            set DIFF_FILES(content,$index) [ lindex $result 0 ]
-            set DIFF_FILES(path,$index) ""
-            set DIFF_FILES(tmp,$index) 0
-            set DIFF_FILES(rev,$index) $rev
-            set DIFF_FILES(filename,$index) $filename
-        }
-        default {
-            return -code error "Unsupported value <$output_file_content_to>\
-             for 'output_file_content_to' variable in [ lindex [ info level 0 ] 0 ]"
-        }
-    }
+    return $vcs_cmd
 }
 
 #===============================================================================
@@ -938,19 +1013,19 @@ proc ::Yadt::Get_Work_Rev_From_Entries { file } {
 
 proc ::Yadt::Get_Work_Rev_From_CVS { filename } {
 
-    variable ::Yadt::CVS_CMD
+    variable ::Yadt::VCS_CMD
 
     set cvsroot [ ::Yadt::Determine_CVS_Root_From_File $filename ]
 
-    set cvscmd [ list $CVS_CMD -d $cvsroot status $filename ]
+    set vcs_cmd [ list $VCS_CMD -d $cvsroot status $filename ]
 
-    set result [ ::Yadt::Run_Cmd_As_Pipe $cvscmd ]
+    set result [ ::Yadt::Run_Cmd_As_Pipe $vcs_cmd ]
     set stdout [ lindex $result 0 ]
     set stderr [ lindex $result 1 ]
     set exitcode [ lindex $result 2 ]
 
     if { $exitcode != 0 } {
-        return -code error "Error while executing <$cvscmd>:\n$stderr\n$stdout"
+        return -code error "Error while executing <$vcs_cmd>:\n$stderr\n$stdout"
     }
 
     set lines [ split $stdout "\n" ]
@@ -1054,6 +1129,7 @@ proc ::Yadt::Is_Parameter { param } {
         "^--diff-cmd$" -
         "^--diff3-cmd$" -
         "^--cvs-cmd$" -
+	"^--git-cmd$" -
         "^--initline$" -
         "^--inlinetag$" -
         "^--inline2tag$" -
@@ -1123,7 +1199,7 @@ proc ::Yadt::Parse_Args {} {
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::DIFF_CMD
     variable ::Yadt::DIFF3_CMD
-    variable ::Yadt::CVS_CMD
+    variable ::Yadt::VCS_CMD
     variable ::Yadt::OPTIONS
     variable ::Yadt::WDG_OPTIONS
 
@@ -1140,9 +1216,9 @@ proc ::Yadt::Parse_Args {} {
     set chdir ""
     set DIFF_CMD ""
     set DIFF3_CMD ""
-    set CVS_CMD ""
+    set VCS_CMD ""
     set diff_option 2
-    set OPTIONS(cvs_needed) 0
+    set OPTIONS(vcs_needed) 0
 
     # Note: there is no sense to parse and to support "--" option
     # This option is completely ignored by wish or tclkit
@@ -1210,8 +1286,12 @@ proc ::Yadt::Parse_Args {} {
             }
             "^--cvs-cmd$" {
                 incr argindex
-                set CVS_CMD [ lindex $argv $argindex ]
+                set VCS_CMD [ lindex $argv $argindex ]
             }
+	    "^--git-cmd$" {
+		incr argindex
+		set VCS_CMD [ lindex $argv $argindex ]
+	    }
             "^--config$" {
                 incr argindex
                 set WDG_OPTIONS(config_file_path) [ lindex $argv $argindex ]
@@ -1602,16 +1682,18 @@ proc ::Yadt::Parse_Args {} {
 
     foreach element $execute_list {
         if { [ lindex $element 0 ] == "::Yadt::Prepare_File_Rev" } {
-            set OPTIONS(cvs_needed) 1
+	    set fname  [ lindex $element 1 ]
+            set OPTIONS(vcs_needed) 1
+	    ::Yadt::Detect_VCS $fname
             break
         }
     }
 
-    if { $OPTIONS(cvs_needed) && $CVS_CMD == "" } {
-        if { $stand_alone } {
-            ::Yadt::Extract_Tools_And_Update_Cmd -cvs
+    if { $OPTIONS(vcs_needed) && $VCS_CMD == "" } {
+        if { $stand_alone && $OPTIONS(vcs) == "cvs" } {
+            ::Yadt::Extract_Tools_And_Update_Cmd -$OPTIONS(vcs)
         } else {
-            set CVS_CMD cvs
+            set VCS_CMD $OPTIONS(vcs)
         }
     }
 
@@ -1686,7 +1768,7 @@ proc ::Yadt::Extract_Tools_And_Update_Cmd { tool_name } {
     variable ::Yadt::OPTIONS
     variable ::Yadt::DIFF_CMD
     variable ::Yadt::DIFF3_CMD
-    variable ::Yadt::CVS_CMD
+    variable ::Yadt::VCS_CMD
 
     if { !$OPTIONS(is_starkit) } return
 
@@ -1706,7 +1788,7 @@ proc ::Yadt::Extract_Tools_And_Update_Cmd { tool_name } {
             set DIFF3_CMD [ ::Yadt::Extract_Tool diff3 $tools_path ]
         }
         -cvs {
-            set CVS_CMD [ ::Yadt::Extract_Tool cvs $tools_path ]
+            set VCS_CMD [ ::Yadt::Extract_Tool cvs $tools_path ]
         }
         default {
             return -code error "Unsupported tool name <$tool_name>"
@@ -2097,6 +2179,8 @@ proc ::Yadt::Get_Usage_String { } {
         \t\t- if necessary specify the alternative diff3 utility path\n\n\
         \t --cvs-cmd <cvs path>\n\
         \t\t- if necessary specify the alternative directory where cvs util is located\n\n\
+        \t --git-cmd <git path>\n\
+        \t\t- if necessary specify the alternative directory where git util is located\n\n\
         \t --d <cvsroot>\n\
         \t\t- if necessary specify the alternative CVS Root\n\n\
         \t --module <cvsmodule>\n\
@@ -2196,21 +2280,21 @@ proc ::Yadt::Init_Opts {} {
     }
 
     # use_cvs_diff - defines the way of file retrieving and diffing
-    # This option has sense only when comparing two files.
+    # For CVS this option has sense only when comparing two files.
     # When comparing three files this option is always treated as set to 0
     #
     # if use_cvs_diff = 0
-    #     we retrieve all files from CVS to tmp dir and run "diff" or "diff3" on them
+    #     we retrieve all files from VCS to tmp dir and run "diff" or "diff3" on them
     # if use_cvs_diff = 1
     #     we do not retrieve files, just load their content to widgets and then
-    #     run "cvs diff" to get diff information
-    #     Note: - actual only for diff2,
-    #           for diff3 - use_cvs_diff = 0 will be used anyway
-    #           - local copy of repository is mandatory;
-    #           - if called outside of local repository dir - use --chdir to get there,
-    #             otherwise "cvs diff" will fail.
+    #     For CVS: run "cvs diff" to get diff information
+    #         Note: - actual only for diff2,
+    #                 for diff3 - use_cvs_diff = 0 will be used anyway
+    #               - local copy of repository is mandatory;
+    #               - if called outside of local repository dir - use --chdir
+    #                 to get there, otherwise "cvs diff" will fail.
     #
-    # ver_from_entry - the way of determining working CVS version
+    # cvs_ver_from_entry - the way of determining working CVS version
     #     1 - from CVS/Entries file
     #     0 - from "cvs status" output
     # Note: any operation with cvs can slow down the whole yadt execution time
@@ -2234,7 +2318,8 @@ proc ::Yadt::Init_Opts {} {
         taginfo      0
         tagln        1
         tagtext      1
-        ver_from_entry 1
+	vcs          ""
+        cvs_ver_from_entry 1
     }
 
     array set WDG_OPTIONS {
@@ -2986,20 +3071,35 @@ proc ::Yadt::Exec_Diff {} {
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::OPTIONS
 
-    if { $DIFF_TYPE == 3 || ( $DIFF_TYPE == 2 && ( !$OPTIONS(cvs_needed) || !$OPTIONS(use_cvs_diff) ) ) } {
-        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-            if ![ info exists DIFF_FILES(path,$i) ] {
-                return -code error "Internal error. Variable does not exist."
-            }
-            if { $DIFF_FILES(path,$i) == "" } {
-                return -code error "Empty file path for <$i> file."
-            }
-        }
+    set file_check 0
+    switch -- $OPTIONS(vcs) {
+	"cvs" {
+	    if { $DIFF_TYPE == 3 || !$OPTIONS(use_cvs_diff) } {
+		set file_check 1
+	    }
+	}
+	"git" {
+	    set file_check 1
+	}
+	default {
+	    return -code error "Sorry, VCS <$vcs> not yet supported."
+	}
+    }
+
+    if { $file_check } {
+	for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+	    if ![ info exists DIFF_FILES(path,$i) ] {
+		return -code error "Internal error. Variable DIFF_FILES(path,$i) does not exist."
+	    }
+	    if { $DIFF_FILES(path,$i) == "" } {
+		return -code error "Empty file path for <$i> file."
+	    }
+	}
     }
 
     switch -- $DIFF_TYPE {
         2 {
-            if { $OPTIONS(cvs_needed) && $OPTIONS(use_cvs_diff) } {
+            if { $OPTIONS(vcs) == "cvs" && $OPTIONS(vcs_needed) && $OPTIONS(use_cvs_diff) } {
                 ::Yadt::CVS_Diff
             } else {
                 ::Yadt::Exec_Diff2
@@ -3113,10 +3213,10 @@ proc ::Yadt::CVS_Diff {} {
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::OPTIONS
-    variable ::Yadt::CVS_CMD
+    variable ::Yadt::VCS_CMD
     variable ::Yadt::DIFF_IGNORE_SPACES_OPTION
 
-    set cmd $CVS_CMD
+    set cmd $VCS_CMD
 
     if { $OPTIONS(cvsroot) != "" } {
         lappend cmd -d $OPTIONS(cvsroot)
@@ -10279,6 +10379,7 @@ There are a number of ways you can call yadt:
         --diff-cmd "diff PATH"
         --diff3-cmd "diff3 PATH"
         --cvs-cmd "cvs PATH"
+        --git-cmd "git PATH"
         --d CVSROOT
         --module CVSMODULE
         --ge[ometry] WIDTHxHEIGHT
@@ -10350,6 +10451,7 @@ Compare 3 files:
         <cmd>--diff-cmd "diff PATH"</cmd> - specifies other diff utility path to use instead of default.
         <cmd>--diff3-cmd "diff3 PATH"</cmd> - specifies other diff3 utility path to use instead of default.
         <cmd>--cvs-cmd "cvs PATH"</cmd> - specifies other cvs utility path to use instead of default.
+        <cmd>--git-cmd "git PATH"</cmd> - specifies other git utility path to use instead of default.
         <cmd>--d CVSROOT</cmd> - specifies cvsroot if needed.
 
         <itl>Example:</itl>
