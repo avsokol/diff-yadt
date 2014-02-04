@@ -875,15 +875,13 @@ proc ::Yadt::Prepare_GIT_Cmd { filename index rev } {
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::VCS_CMD
 
-    set tailname [ file tail $filename ]
-
     set DIFF_FILES(label,$index) "$filename (CVS r$rev)"
 
     if { $rev == "" } {
 	set rev "HEAD"
     }
 
-    set vcs_cmd [ list $VCS_CMD show $rev:$tailname ]
+    set vcs_cmd [ list $VCS_CMD show $rev:$filename ]
 
     return $vcs_cmd
 }
