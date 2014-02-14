@@ -716,7 +716,7 @@ proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
 	    set vcs_cmd [ ::Yadt::Prepare_GIT_Cmd $filename $index $rev ]
 	}
 	default {
-	    return -code error "Sorry, VCS <$vcs> not supported yet"
+	    return -code error "Sorry, VCS <$OPTIONS(vcs)> not supported yet"
 	}
     }
 
@@ -875,11 +875,11 @@ proc ::Yadt::Prepare_GIT_Cmd { filename index rev } {
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::VCS_CMD
 
-    set DIFF_FILES(label,$index) "$filename (CVS r$rev)"
-
     if { $rev == "" } {
 	set rev "HEAD"
     }
+
+    set DIFF_FILES(label,$index) "$filename (CVS r$rev)"
 
     set vcs_cmd [ list $VCS_CMD show $rev:$filename ]
 
@@ -1678,6 +1678,7 @@ proc ::Yadt::Parse_Args {} {
 
     set stand_alone [ ::Yadt::Is_Standalone_Call ]
 
+    set OPTIONS(vcs) "files"
     foreach element $execute_list {
         if { [ lindex $element 0 ] == "::Yadt::Prepare_File_Rev" } {
 	    set fname  [ lindex $element 1 ]
@@ -2983,8 +2984,7 @@ proc ::Yadt::Recompute_Diffs {} {
 
     set current_pos $DIFF_INT(pos)
     ::Yadt::Start_New_Diff_Wrapper
-    set DIFF_INT(pos) $current_pos
-    ::Yadt::Set_Diff_Indicator $DIFF_INT(pos) 0 1
+    ::Yadt::Set_Diff_Indicator $current_pos 0 1
 }
 
 #===============================================================================
@@ -3079,8 +3079,11 @@ proc ::Yadt::Exec_Diff {} {
 	"git" {
 	    set file_check 1
 	}
+	"files" {
+	    set file_check 1
+	}
 	default {
-	    return -code error "Sorry, VCS <$vcs> not yet supported."
+	    return -code error "Sorry, VCS <$OPTIONS(vcs)> not yet supported."
 	}
     }
 
@@ -4796,7 +4799,9 @@ proc ::Yadt::Inline_Tags { action pos } {
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
         for { set j 0 } { $j < $DIFF_INT(scrinline,$pos,$i) } { incr j } {
             foreach { line startcol endcol tag } $DIFF_INT(scrinline,$pos,$i,$j) { }
-            ::Yadt::Inline_Tag $action $TEXT_WDG($i) $tag $line $startcol $endcol
+	    if { $tag == "inlinetag" || $tag == "inline2tag" } {
+		::Yadt::Inline_Tag $action $TEXT_WDG($i) $tag $line $startcol $endcol
+	    }
         }
     }
 }
@@ -5067,9 +5072,9 @@ proc ::Yadt::Define_Tags_Priority {} {
     variable ::Yadt::WIDGETS
 
     foreach element [ concat [ ::Yadt::Get_Diff_Wdg_List ] $WIDGETS(diff_lines_text) ] {
-        $element tag raise inline2tag
-        $element tag raise inlinetag
         $element tag raise instag
+        $element tag raise inlinetag
+        $element tag raise inline2tag
     }
 
     foreach element [ concat [ ::Yadt::Get_Diff_Wdg_List ] \
