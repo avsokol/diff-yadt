@@ -677,23 +677,23 @@ proc ::Yadt::Detect_VCS { dir } {
 
     # check for CVS
     if { [ file exists $cvs_dir ] && [ file isdirectory $cvs_dir ] } {
-	set OPTIONS(vcs) "cvs"
-	return
+        set OPTIONS(vcs) "cvs"
+        return
     }
 
     # check for GIT
     set abs_dir [ file nativename [ file normalize $dir ] ]
     set dir $abs_dir
     while { 1 } {
-	if { $dir == "/" } {
-	    break
-	}
-	set git_dir [ file join $dir .git ]
-	if { [ file exists $git_dir ] && [ file isdirectory $git_dir ] } {
-	    set OPTIONS(vcs) "git"
-	    return
-	}
-	set dir [ file dirname $dir ]
+        if { $dir == "/" } {
+            break
+        }
+        set git_dir [ file join $dir .git ]
+        if { [ file exists $git_dir ] && [ file isdirectory $git_dir ] } {
+            set OPTIONS(vcs) "git"
+            return
+        }
+        set dir [ file dirname $dir ]
     }
 }
 
@@ -709,15 +709,15 @@ proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
     set tailname [ file tail $filename ]
 
     switch -- $OPTIONS(vcs) {
-	"cvs" {
-	    set vcs_cmd [ ::Yadt::Prepare_CVS_Cmd $filename $index $rev ]
-	}
-	"git" {
-	    set vcs_cmd [ ::Yadt::Prepare_GIT_Cmd $filename $index $rev ]
-	}
-	default {
-	    return -code error "Sorry, VCS <$OPTIONS(vcs)> not supported yet"
-	}
+        "cvs" {
+            set vcs_cmd [ ::Yadt::Prepare_CVS_Cmd $filename $index $rev ]
+        }
+        "git" {
+            set vcs_cmd [ ::Yadt::Prepare_GIT_Cmd $filename $index $rev ]
+        }
+        default {
+            return -code error "Sorry, VCS <$OPTIONS(vcs)> not supported yet"
+        }
     }
 
     # output_file_content_to can be -file or -variable:
@@ -730,7 +730,7 @@ proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
 
     set output_file_content_to -variable
     if { !$OPTIONS(use_cvs_diff) } {
-	set output_file_content_to -file
+        set output_file_content_to -file
     }
     if { $OPTIONS(vcs) == "cvs" && $DIFF_TYPE == 2 && $OPTIONS(use_cvs_diff) } {
         set output_file_content_to -variable
@@ -863,6 +863,8 @@ proc ::Yadt::Prepare_CVS_Cmd { filename index rev } {
         }
     }
 
+    set DIFF_FILES(label,$index) "$filename (CVS r$rev)"
+
     set vcs_cmd [ list $VCS_CMD -d $cvsroot -q co -p -r $rev $file_to_compare ]
 
     return $vcs_cmd
@@ -876,7 +878,7 @@ proc ::Yadt::Prepare_GIT_Cmd { filename index rev } {
     variable ::Yadt::VCS_CMD
 
     if { $rev == "" } {
-	set rev "HEAD"
+        set rev "HEAD"
     }
 
     set DIFF_FILES(label,$index) "$filename (CVS r$rev)"
@@ -1127,7 +1129,7 @@ proc ::Yadt::Is_Parameter { param } {
         "^--diff-cmd$" -
         "^--diff3-cmd$" -
         "^--cvs-cmd$" -
-	"^--git-cmd$" -
+        "^--git-cmd$" -
         "^--initline$" -
         "^--inlinetag$" -
         "^--inline2tag$" -
@@ -1286,10 +1288,10 @@ proc ::Yadt::Parse_Args {} {
                 incr argindex
                 set VCS_CMD [ lindex $argv $argindex ]
             }
-	    "^--git-cmd$" {
-		incr argindex
-		set VCS_CMD [ lindex $argv $argindex ]
-	    }
+            "^--git-cmd$" {
+                incr argindex
+                set VCS_CMD [ lindex $argv $argindex ]
+            }
             "^--config$" {
                 incr argindex
                 set WDG_OPTIONS(config_file_path) [ lindex $argv $argindex ]
@@ -1681,9 +1683,9 @@ proc ::Yadt::Parse_Args {} {
     set OPTIONS(vcs) "files"
     foreach element $execute_list {
         if { [ lindex $element 0 ] == "::Yadt::Prepare_File_Rev" } {
-	    set fname  [ lindex $element 1 ]
+            set fname  [ lindex $element 1 ]
             set OPTIONS(vcs_needed) 1
-	    ::Yadt::Detect_VCS $fname
+            ::Yadt::Detect_VCS [ file dirname $fname ]
             break
         }
     }
@@ -1948,7 +1950,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.242 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.243 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -2317,7 +2319,7 @@ proc ::Yadt::Init_Opts {} {
         taginfo      0
         tagln        1
         tagtext      1
-	vcs          ""
+        vcs          ""
         cvs_ver_from_entry 1
     }
 
@@ -3071,31 +3073,31 @@ proc ::Yadt::Exec_Diff {} {
 
     set file_check 0
     switch -- $OPTIONS(vcs) {
-	"cvs" {
-	    if { $DIFF_TYPE == 3 || !$OPTIONS(use_cvs_diff) } {
-		set file_check 1
-	    }
-	}
-	"git" {
-	    set file_check 1
-	}
-	"files" {
-	    set file_check 1
-	}
-	default {
-	    return -code error "Sorry, VCS <$OPTIONS(vcs)> not yet supported."
-	}
+        "cvs" {
+            if { $DIFF_TYPE == 3 || !$OPTIONS(use_cvs_diff) } {
+                set file_check 1
+            }
+        }
+        "git" {
+            set file_check 1
+        }
+        "files" {
+            set file_check 1
+        }
+        default {
+            return -code error "Sorry, VCS <$OPTIONS(vcs)> not yet supported."
+        }
     }
 
     if { $file_check } {
-	for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-	    if ![ info exists DIFF_FILES(path,$i) ] {
-		return -code error "Internal error. Variable DIFF_FILES(path,$i) does not exist."
-	    }
-	    if { $DIFF_FILES(path,$i) == "" } {
-		return -code error "Empty file path for <$i> file."
-	    }
-	}
+        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+            if ![ info exists DIFF_FILES(path,$i) ] {
+                return -code error "Internal error. Variable DIFF_FILES(path,$i) does not exist."
+            }
+            if { $DIFF_FILES(path,$i) == "" } {
+                return -code error "Empty file path for <$i> file."
+            }
+        }
     }
 
     switch -- $DIFF_TYPE {
@@ -4799,9 +4801,9 @@ proc ::Yadt::Inline_Tags { action pos } {
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
         for { set j 0 } { $j < $DIFF_INT(scrinline,$pos,$i) } { incr j } {
             foreach { line startcol endcol tag } $DIFF_INT(scrinline,$pos,$i,$j) { }
-	    if { $tag == "inlinetag" || $tag == "inline2tag" } {
-		::Yadt::Inline_Tag $action $TEXT_WDG($i) $tag $line $startcol $endcol
-	    }
+            if { $tag == "inlinetag" || $tag == "inline2tag" } {
+                ::Yadt::Inline_Tag $action $TEXT_WDG($i) $tag $line $startcol $endcol
+            }
         }
     }
 }
