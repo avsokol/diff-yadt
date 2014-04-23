@@ -1950,7 +1950,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.243 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.244 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -4801,9 +4801,7 @@ proc ::Yadt::Inline_Tags { action pos } {
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
         for { set j 0 } { $j < $DIFF_INT(scrinline,$pos,$i) } { incr j } {
             foreach { line startcol endcol tag } $DIFF_INT(scrinline,$pos,$i,$j) { }
-            if { $tag == "inlinetag" || $tag == "inline2tag" } {
-                ::Yadt::Inline_Tag $action $TEXT_WDG($i) $tag $line $startcol $endcol
-            }
+            ::Yadt::Inline_Tag $action $TEXT_WDG($i) $tag $line $startcol $endcol
         }
     }
 }
@@ -5074,9 +5072,9 @@ proc ::Yadt::Define_Tags_Priority {} {
     variable ::Yadt::WIDGETS
 
     foreach element [ concat [ ::Yadt::Get_Diff_Wdg_List ] $WIDGETS(diff_lines_text) ] {
-        $element tag raise instag
         $element tag raise inlinetag
         $element tag raise inline2tag
+        $element tag raise instag
     }
 
     foreach element [ concat [ ::Yadt::Get_Diff_Wdg_List ] \
