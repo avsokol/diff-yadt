@@ -213,3 +213,19 @@ proc ::CmnTools::Parse_Yadt_Customization_Data { data } {
 }
 
 #===============================================================================
+
+proc ::CmnTools::Obtain_Result_From_Error_Code { args } {
+
+    global errorCode
+
+    set rc  [ ::CmnTools::Get_Arg -default_value args -default 127 ]
+
+    switch [ lindex $errorCode 0 ] {
+        NONE        { set rc 0 }
+        CHILDSTATUS { set rc [ lindex $errorCode 2 ] }
+    }
+
+    return $rc
+}
+
+#===============================================================================
