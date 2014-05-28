@@ -229,20 +229,12 @@ proc ::Yadt::Run_Cmd_As_Pipe { cmd } {
     set fd_exitcode [ catch { close $fd } stderr ]
 
     if { $fd_exitcode != 0 } {
-        switch [ lindex $errorCode 0 ] {
-            CHILDSTATUS {
-                set exitcode [ lindex $errorCode 2 ]
-                if { $exitcode != 1 } {
-                    set stderr $stdout
-                } else {
-                    regsub "child process exited abnormally" $stderr "" stderr
-                }
-            }
-            NONE {
-            }
-            default  {
+        set exitcode [ ::CmnTools::Obtain_Result_From_Error_Code -default_value -1 ]
+        if { $exitcode != 0 } {
+            if { $exitcode == 1 } {
+                regsub "child process exited abnormally" $stderr "" stderr
+            } else {
                 set stderr $stdout
-                set exitcode -1
             }
         }
     }
@@ -254,28 +246,16 @@ proc ::Yadt::Run_Cmd_As_Pipe { cmd } {
 
 proc ::Yadt::Execute_Cmd { cmd } {
 
-    global errorCode
-
     ::Yadt::Align_Cmd_For_Old_Windows cmd
 
     set stderr ""
     set exitcode 0
 
     if [ catch { eval exec $cmd } stdout ] {
-         switch [ lindex $errorCode 0 ] {
-             CHILDSTATUS {
-                 set exitcode [ lindex $errorCode 2 ]
-                 if { $exitcode != 1 } {
-                     set stderr $stdout
-                 }
-             }
-             NONE {
-             }
-             default  {
-                 set stderr $stdout
-                 set exitcode -1
-             }
-         }
+        set exitcode [ ::CmnTools::Obtain_Result_From_Error_Code -default_value -1 ]
+    }
+    if { $exitcode != 0  &&  $exitcode != 1 } {
+        set stderr $stdout
     }
     return [ list "$stdout" "$stderr" "$exitcode" ]
 }
@@ -1929,10 +1909,10 @@ proc ::Yadt::Package_Tk_Require_And_Configure {} {
     }
 
     option add *Text.selectBorderWidth 1
-    option add *Button.borderWidth 2
-    option add *Label.borderWidth 2
-    option add *Menubutton.borderWidth 2
-    option add *Panedwindow.sashWidth 2
+    option add *Button.borderWidth 1
+    option add *Label.borderWidth 1
+    option add *Menubutton.borderWidth 1
+    option add *Panedwindow.sashWidth 3
     option add *Panedwindow.sashRelief raised
 }
 
@@ -1950,7 +1930,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.244 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.249 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -2136,39 +2116,41 @@ proc ::Yadt::Get_Usage_String { } {
     set me "yadt"
 
     return "Usage:\n\
-        \n--usage - this usage\n\
-        \n--help - graphic help\n\
+        \n$me --usage
+        \t- this usage\n\
+        \n$me --help
+        \t- graphic help\n\
         \n2-Way diffs:\n\
-        $me \[<OPTIONS>\] <file1> <file2>\n\
-        \t- compares <file1> vs. <file2>\n\n\
-        $me \[<OPTIONS>\] -r <revision> <file>\n\
-        \t- compares <revision> CVS revision of <file> vs. local <file>\n\n\
-        $me \[<OPTIONS>\] -r <revision> -r <file>\n\
-        \t- compares <revision> CVS revision of <file> vs. <working> CVS revision of <file>\n\n\
-        $me \[<OPTIONS>\] -r <revision1> -r <revision2> <file>\n\
-        \t- compares <revision1> CVS revision of <file> vs. <revision2> CVS revision of <file>\n\n\
-        $me \[<OPTIONS>\] <file> -r <revision> -r\n\
-        \t- compares <revision> CVS revision of <file> vs. <working> CVS revision of <file>\n\n\
-        $me \[<OPTIONS>\] <file> -r -r <revision>\n\
-        \t- compares <working> CVS revision of <file> vs. <revision> CVS revision of <file>\n\n\
+        $me \[<OPTIONS>\] <OLDFILE> <MYFILE>\n\
+        \t- compares <OLDFILE> vs. <MYFILE>\n\n\
+        $me \[<OPTIONS>\] -r <revision> <FILE>\n\
+        \t- compares <revision> CVS revision of <FILE> vs. local <FILE>\n\n\
+        $me \[<OPTIONS>\] -r <revision> -r <FILE>\n\
+        \t- compares <revision> CVS revision of <FILE> vs. <working> CVS revision of <FILE>\n\n\
+        $me \[<OPTIONS>\] -r <revision1> -r <revision2> <FILE>\n\
+        \t- compares <revision1> CVS revision of <FILE> vs. <revision2> CVS revision of <FILE>\n\n\
+        $me \[<OPTIONS>\] <FILE> -r <revision> -r\n\
+        \t- compares <revision> CVS revision of <FILE> vs. <working> CVS revision of <FILE>\n\n\
+        $me \[<OPTIONS>\] <FILE> -r -r <revision>\n\
+        \t- compares <working> CVS revision of <FILE> vs. <revision> CVS revision of <FILE>\n\n\
         \n3-Way diffs:\n\
-        $me \[<OPTIONS>\] \[--diff3\] <file1> <file2> <file3>\n\
-        \t- compares <file1> vs. <file2> vs. <file3>\n\n\
-        $me \[<OPTIONS>\] --diff3 <file>\n\
-        \t- compares HEAD CVS revision vs. <working> CVS revision vs. local <file>\n\n\
-        $me \[<OPTIONS>\] --diff3 -r <revision1> -r <revision2> -r <revision3> <file>\n\
-        \t- compares <revision1> CVS revision of <file> vs. <revision2> CVS revision of <file> vs. <revision3> CVS revision of <file>\n\n\
-        $me \[<OPTIONS>\] --diff3 -r <revision1> <file> -r <revision2>\n\
-        \t- compares <revision1> CVS revision of <file> vs. local <file> vs. <revision2> CVS revision of <file>\n\n\
-        $me \[<OPTIONS>\] --diff3 <file> -r <revision1> -r <revision2>\n\
-        \t- compares local <file> vs. <revision1> CVS revision of <file> vs. <revision2> CVS revision of <file>\n\n\
-        $me \[<OPTIONS>\] --diff3 <file> -r <revision1> -r <revision2> -r\n\
-        \t- compares <revision1> CVS revision of <file> vs. <revision2> CVS revision of <file> vs. <working> CVS revision of <file>\n\n\
+        $me \[<OPTIONS>\] \[--diff3\] <OLDFILE> <YOURFILE> <MYFILE>\n\
+        \t- compares <OLDFILE> vs. <YOURFILE> vs. <MYFILE>\n\n\
+        $me \[<OPTIONS>\] --diff3 <FILE>\n\
+        \t- compares HEAD CVS revision vs. <working> CVS revision vs. local <FILE>\n\n\
+        $me \[<OPTIONS>\] --diff3 -r <revision1> -r <revision2> -r <revision3> <FILE>\n\
+        \t- compares <revision1> CVS revision of <FILE> vs. <revision2> CVS revision of <FILE> vs. <revision3> CVS revision of <FILE>\n\n\
+        $me \[<OPTIONS>\] --diff3 -r <revision1> <FILE> -r <revision2>\n\
+        \t- compares <revision1> CVS revision of <FILE> vs. local <FILE> vs. <revision2> CVS revision of <FILE>\n\n\
+        $me \[<OPTIONS>\] --diff3 <FILE> -r <revision1> -r <revision2>\n\
+        \t- compares local <FILE> vs. <revision1> CVS revision of <FILE> vs. <revision2> CVS revision of <FILE>\n\n\
+        $me \[<OPTIONS>\] --diff3 <FILE> -r <revision1> -r <revision2> -r\n\
+        \t- compares <revision1> CVS revision of <FILE> vs. <revision2> CVS revision of <FILE> vs. <working> CVS revision of <FILE>\n\n\
         \nCVS-conflicts for a file:\n\
-        $me \[<OPTIONS>\] --conflict <file>\n\
-        \t- Check <file> with conflict markers\n\n\
+        $me \[<OPTIONS>\] --conflict <FILE>\n\
+        \t- Check <FILE> with conflict markers\n\n\
         Where <OPTIONS> can be:\n\
-        \t --merge <merge_file>\n\
+        \t --merge <MERGE_FILE>\n\
         \t\t- specify the name of merge file\n\n\
         \t --initline <line>\n\
         \t\t- specify the initline where to go after $me is started\n\n\
@@ -2194,7 +2176,7 @@ proc ::Yadt::Get_Usage_String { } {
         \t\t- if necessary specify path to the $me config file\n\n\
         \t --norc\n\
         \t\t- avoid using $me config file\n\n\
-        \t--auto-merge\n\
+        \t --auto-merge\n\
         \t\t- for 3-way merge, try to resolve conflicts automatically"
 }
 
@@ -2821,6 +2803,15 @@ proc ::Yadt::Save_One_Merged_File { ind args } {
             }
         }
     }
+
+    set dir_name [ file dirname $file_name ]
+    if ![ file exists $dir_name ] {
+        file mkdir $dir_name
+    }
+    if ![ file isdirectory $dir_name ] {
+        return -code error "Specified directory <$dir_name> is not a directory."
+    }
+
     set f_handle [ open "$file_name" w ]
     set content [ $MERGE_TEXT_WDG($i) get 1.0 end-1lines ]
     puts -nonewline $f_handle $content
@@ -5072,8 +5063,8 @@ proc ::Yadt::Define_Tags_Priority {} {
     variable ::Yadt::WIDGETS
 
     foreach element [ concat [ ::Yadt::Get_Diff_Wdg_List ] $WIDGETS(diff_lines_text) ] {
-        $element tag raise inlinetag
         $element tag raise inline2tag
+        $element tag raise inlinetag
         $element tag raise instag
     }
 
@@ -6286,7 +6277,7 @@ proc ::Yadt::Draw_Toolbar_Elements { } {
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::MERGE_START
 
-    set WIDGETS(tool_bar) [ frame $WIDGETS(window_name).toolbar -relief groove -bd 1 ]
+    set WIDGETS(tool_bar) [ ::ttk::frame $WIDGETS(window_name).toolbar -relief groove -style Toolbutton ]
     pack $WIDGETS(tool_bar) -side top -fill x -expand 0
 
     switch -- $DIFF_TYPE {
@@ -10354,7 +10345,7 @@ There are a number of ways you can call yadt:
 
 <bld>2-Way diffs:</bld>
 <cmd>
-        yadt [OPTIONS] FILE1 FILE2
+        yadt [OPTIONS] OLDFILE MYFILE
         yadt [OPTIONS] -r REV FILE
         yadt [OPTIONS] -r REV -r FILE
         yadt [OPTIONS] -r REV1 -r REV2 FILE
@@ -10363,7 +10354,7 @@ There are a number of ways you can call yadt:
 </cmd>
 <bld>3-Way diffs:</bld>
 <cmd>
-        yadt [OPTIONS] [--diff3] FILE1 FILE2 FILE3
+        yadt [OPTIONS] [--diff3] OLDFILE YOURFILE MYFILE
         yadt [OPTIONS] --diff3 FILE
         yadt [OPTIONS] --diff3 -r REV1 -r REV2 -r REV3 FILE
         yadt [OPTIONS] --diff3 -r REV1 FILE -r REV2
@@ -10398,11 +10389,11 @@ There are a number of ways you can call yadt:
 
 Compare 2 files:
         <cmd>
-        yadt FILE1 FILE2
+        yadt OLDFILE MYFILE
         </cmd>
 Compare 3 files:
         <cmd>
-        yadt FILE1 FILE2 FILE3
+        yadt OLDFILE YOURFILE MYFILE
         </cmd>
 
 <bld>Plain file with conflict markers:</bld>
@@ -10445,8 +10436,8 @@ Compare 3 files:
 
         <itl>Examples:</itl>
         <cmd>
-        yadt FILE1 FILE2 --merge FILE2_MERGE
-        yadt FILE1 FILE2 FILE3 --merge FILE3_MERGE
+        yadt OLDFILE MYFILE --merge MYFILE_MERGE
+        yadt OLDFILE YOURFILE MYFILE --merge MYFILE_MERGE
         yadt --diff3 FILE --merge FILE_MERGE
         </cmd>
         <cmd>--initline LINE</cmd> - specifies the line number where to go when yadt is started
@@ -10461,7 +10452,7 @@ Compare 3 files:
         
         Comparing files in CVS without having a local copy of CVS repository:
         <cmd>
-        yadt --d CVSROOT --module CVSMODULE -r 1.1 -r 1.2 FILE1
+        yadt --d CVSROOT --module CVSMODULE -r 1.1 -r 1.2 FILE
         </cmd>
         Here CVSROOT and CVSMODULE have the same values as during command:
         <cmd>
@@ -10472,7 +10463,7 @@ Compare 3 files:
 
         <itl>Example:</itl>
         <cmd>
-        yadt FILE1 --geometry 800x600
+        yadt FILE --geometry 800x600
         </cmd>
         <cmd>--ho[rizontal] | --ve[rtical]</cmd> - by default yadt has vertical layout. However, it is possible to place comparing files one under another by specifying --ho[rizontal] in command line. Also, it is possible to change the layout from menu.
         <cmd>--config</cmd> - specify alternative path to the yadt config file.
@@ -10481,7 +10472,7 @@ Compare 3 files:
 
         <itl>Example:</itl>
         <cmd>
-        yadt FILE1 FILE2 FILE3 --merge FILE_MERGE --auto-merge
+        yadt OLDFILE YOURFILE MYFILE --merge MYFILE_MERGE --auto-merge
         </cmd>
 
 <ttl>Yadt GUI usage</ttl>
