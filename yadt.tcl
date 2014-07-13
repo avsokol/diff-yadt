@@ -1113,6 +1113,7 @@ proc ::Yadt::Is_Parameter { param } {
         "^--initline$" -
         "^--inlinetag$" -
         "^--inline2tag$" -
+        "^--inlinechgtag$" -
         "^--merge$" -
         "^--merge1$" -
         "^--merge2$" -
@@ -1295,6 +1296,11 @@ proc ::Yadt::Parse_Args {} {
                 incr argindex
                 set OPTIONS(inline2tag) [ lindex $argv $argindex ]
                 set WDG_OPTIONS(inline2tag,is_set) 1
+            }
+            "^--inlinechgtag$" {
+                incr argindex
+                set OPTIONS(inlinechgtag) [ lindex $argv $argindex ]
+                set WDG_OPTIONS(inlinechgtag,is_set) 1
             }
             "^--merge$" -
             "^--merge1$" {
@@ -1930,7 +1936,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.249 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.250 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -2374,8 +2380,9 @@ proc ::Yadt::Init_Graphic {} {
             bg,deltag "red1"
             bg,difftag "gray"
             bg,instag "green3"
-            bg,inlinetag "DodgerBlue"
+            bg,inlinechgtag "cyan3"
             bg,inline2tag "PaleGreen"
+            bg,inlinetag "DodgerBlue"
             bg,overlaptag "yellow"
             fg,bytetag "black"
             fg,chgtag "black" 
@@ -2385,6 +2392,7 @@ proc ::Yadt::Init_Graphic {} {
             fg,instag "black"
             fg,inlinetag "black"
             fg,inline2tag "black"
+            fg,inlinechgtag "black"
             fg,overlaptag "black"
         }
 
@@ -2400,6 +2408,7 @@ proc ::Yadt::Init_Graphic {} {
             bytetag    "-underline 1 -foreground $MAP_COLOR(bg,bytetag) -background $MAP_COLOR(fg,bytetag)"
             inlinetag  "-background $MAP_COLOR(bg,inlinetag) -foreground $MAP_COLOR(fg,inlinetag)"
             inline2tag "-background $MAP_COLOR(bg,inline2tag) -foreground $MAP_COLOR(fg,inline2tag)"
+            inlinechgtag "-background $MAP_COLOR(bg,inlinechgtag) -foreground $MAP_COLOR(fg,inlinechgtag)"
             merge1tag  "-background $MAP_COLOR(bg,1) -foreground $MAP_COLOR(fg,1)"
             merge2tag  "-background $MAP_COLOR(bg,2) -foreground $MAP_COLOR(fg,2)"
             merge3tag  "-background $MAP_COLOR(bg,3) -foreground $MAP_COLOR(fg,3)"
@@ -2423,6 +2432,7 @@ proc ::Yadt::Init_Graphic {} {
             instag     "-background black -foreground white"
             inlinetag  "-underline 1"
             inline2tag "-underline 1"
+            inlinechgtag "-underline 1"
             chgtag     "-background black -foreground white"
             overlaptag "-background black -foreground white"
             bytetag    "-underline 1"
@@ -4491,6 +4501,7 @@ proc ::Yadt::Mark_Diffs {} {
     ::Yadt::Prepare_Mark_Diffs
     ::Yadt::Update_Merge_Marks
     ::Yadt::Set_All_Tags
+    ::Yadt::Define_Tags_Priority
 }
 
 #===============================================================================
@@ -4524,7 +4535,7 @@ proc ::Yadt::Prepare_Mark_Diffs {} {
         set OPTIONS(chgtag) "-background $MAP_COLOR(bg,inlinetag) -foreground $MAP_COLOR(fg,inlinetag)"
     }
 
-    foreach tag { currtag difftag deltag instag inlinetag inline2tag chgtag overlaptag sel } {
+    foreach tag { currtag difftag deltag instag inlinetag inline2tag inlinechgtag chgtag overlaptag sel } {
         foreach win [ concat [ ::Yadt::Get_Diff_Wdg_List ] $WIDGETS(diff_lines_text) ] {
             eval $win tag configure $tag $OPTIONS($tag)
         }
@@ -4825,8 +4836,6 @@ proc ::Yadt::Set_Tag { pos newtag { oldtag "" } { setpos 0 } } {
             ::Yadt::Set_Tag3 $pos $newtag $oldtag $setpos
         }
     }
-
-    ::Yadt::Define_Tags_Priority
 }
 
 #===============================================================================
@@ -4994,6 +5003,18 @@ proc ::Yadt::Set_Tag3 { diff_id newtag { oldtag "" } { setpos 0 } } {
             # all files differ - conflict
             set coltag(2) overlaptag
             set coltag(3) overlaptag
+
+            if { [ string trim [ $::Yadt::TEXT_WDG(2) get $s(2).0 $e(2).end ] ] == "" } {
+                set coltag(2) deltag
+            } else {
+                set coltag(2) overlaptag
+            }
+
+            if { [ string trim [ $::Yadt::TEXT_WDG(3) get $s(3).0 $e(3).end ] ] == "" } {
+                set coltag(3) deltag
+            } else {
+                set coltag(3) overlaptag
+            }
         }
         1 {
             # Only base file differ
@@ -5063,8 +5084,10 @@ proc ::Yadt::Define_Tags_Priority {} {
     variable ::Yadt::WIDGETS
 
     foreach element [ concat [ ::Yadt::Get_Diff_Wdg_List ] $WIDGETS(diff_lines_text) ] {
-        $element tag raise inline2tag
         $element tag raise inlinetag
+        $element tag raise chgtag
+        $element tag raise inlinechgtag
+        $element tag raise inline2tag
         $element tag raise instag
     }
 
@@ -7031,9 +7054,9 @@ proc ::Yadt::Fid_Ratcliff_Aux2 { id1 id2 pos l1 l2 s1 off1 len1 s2 off2 len2 } {
         }
     } else {
         for { set i 1 } { $i <= 2 } { incr i } {
-            $WIDGETS(diff_lines_text) tag add inlinetag [ set id$i ].[ set off$i ] "[ set id$i ].[ set off$i ]+[ set len$i ]c"
+            $WIDGETS(diff_lines_text) tag add inlinechgtag [ set id$i ].[ set off$i ] "[ set id$i ].[ set off$i ]+[ set len$i ]c"
             set DIFF_INT(scrinline,$pos,[ set id$i ],$DIFF_INT(scrinline,$pos,[ set id$i ])) \
-                [ list [ set l$i ] [ set off$i ] [ expr [ set off$i ] + [ set len$i ] ] inlinetag ]
+                [ list [ set l$i ] [ set off$i ] [ expr [ set off$i ] + [ set len$i ] ] inlinechgtag ]
             incr DIFF_INT(scrinline,$pos,[ set id$i ])
         }
     }
@@ -7050,7 +7073,22 @@ proc ::Yadt::Fid_Ratcliff_Aux3 { pos l1 l2 l3 s1 off1 len1 s2 off2 len2 s3 off3 
     variable ::Yadt::DIFF_TYPE
 
     if { $len1 <= 0 || $len2 <= 0 || $len3 <= 0 } {
-        if { $len1 == 0 } {
+        if { $len1 == 0 && $len2 == 0 } {
+            $WIDGETS(diff_lines_text) tag add inline2tag 3.$off3 "3.$off3+${len3}c"
+            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+                [ list $l3 $off3 [ expr $off3 + $len3 ] inline2tag ]
+            incr DIFF_INT(scrinline,$pos,3)
+        } elseif { $len1 == 0 && $len3 == 0 } {
+            $WIDGETS(diff_lines_text) tag add inline2tag 2.$off3 "2.$off2+${len2}c"
+            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+                [ list $l2 $off2 [ expr $off2 + $len2 ] inline2tag ]
+            incr DIFF_INT(scrinline,$pos,2)
+        } elseif { $len2 == 0 && $len3 == 0 } {
+            $WIDGETS(diff_lines_text) tag add inline2tag 1.$off3 "1.$off2+${len1}c"
+            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+                [ list $l1 $off1 [ expr $off1 + $len1 ] inline2tag ]
+            incr DIFF_INT(scrinline,$pos,1)
+        } elseif { $len1 == 0 } {
             $WIDGETS(diff_lines_text) tag add inline2tag 2.$off2 "2.$off2+${len2}c"
             $WIDGETS(diff_lines_text) tag add inline2tag 3.$off3 "3.$off3+${len3}c"
 
@@ -7119,11 +7157,52 @@ proc ::Yadt::Fid_Ratcliff_Aux3 { pos l1 l2 l3 s1 off1 len1 s2 off2 len2 s3 off3 
                 $s3 $rightoff3 [ expr $off3 + $len3 - $rightoff3 ]
         }
     } else {
-        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-            $WIDGETS(diff_lines_text) tag add inlinetag $i.[ set off$i ] "$i.[ set off$i ]+[ set len$i ]c"
-            set DIFF_INT(scrinline,$pos,$i,$DIFF_INT(scrinline,$pos,$i)) \
-                [ list [ set l$i ] [ set off$i ] [ expr [ set off$i ] + [ set len$i ] ] inlinetag ]
-            incr DIFF_INT(scrinline,$pos,$i)
+        if { $s1 == $s2 } {
+            $WIDGETS(diff_lines_text) tag add inlinetag 1.$off1 "1.$off1+${len1}c"
+            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+                [ list $l1 $off1 [ expr $off1 + $len1 ] inlinetag ]
+            incr DIFF_INT(scrinline,$pos,1)
+            $WIDGETS(diff_lines_text) tag add inlinetag 2.$off2 "2.$off2+${len2}c"
+            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+                [ list $l2 $off2 [ expr $off2 + $len2 ] inlinetag ]
+            incr DIFF_INT(scrinline,$pos,2)
+            $WIDGETS(diff_lines_text) tag add inlinechgtag 3.$off3 "3.$off3+${len3}c"
+            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+                [ list $l3 $off3 [ expr $off3 + $len3 ] inlinechgtag ]
+            incr DIFF_INT(scrinline,$pos,3)
+        } elseif { $s1 == $s3 } {
+            $WIDGETS(diff_lines_text) tag add inlinetag 1.$off1 "1.$off1+${len1}c"
+            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+                [ list $l1 $off1 [ expr $off1 + $len1 ] inlinetag ]
+            incr DIFF_INT(scrinline,$pos,1)
+            $WIDGETS(diff_lines_text) tag add inlinetag 3.$off3 "3.$off3+${len3}c"
+            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+                [ list $l3 $off3 [ expr $off3 + $len3 ] inlinetag ]
+            incr DIFF_INT(scrinline,$pos,3)
+            $WIDGETS(diff_lines_text) tag add inlinechgtag 2.$off3 "2.$off2+${len2}c"
+            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+                [ list $l2 $off2 [ expr $off2 + $len2 ] inlinechgtag ]
+            incr DIFF_INT(scrinline,$pos,2)
+        } elseif { $s2 == $s3 } {
+            $WIDGETS(diff_lines_text) tag add inlinetag 2.$off2 "2.$off2+${len2}c"
+            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+                [ list $l2 $off2 [ expr $off2 + $len2 ] inlinetag ]
+            incr DIFF_INT(scrinline,$pos,2)
+            $WIDGETS(diff_lines_text) tag add inlinetag 3.$off3 "3.$off3+${len3}c"
+            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+                [ list $l3 $off3 [ expr $off3 + $len3 ] inlinetag ]
+            incr DIFF_INT(scrinline,$pos,3)
+            $WIDGETS(diff_lines_text) tag add inlinechgtag 1.$off3 "1.$off1+${len1}c"
+            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+                [ list $l1 $off1 [ expr $off1 + $len1 ] inlinechgtag ]
+            incr DIFF_INT(scrinline,$pos,1)
+        } else {
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                $WIDGETS(diff_lines_text) tag add inlinechgtag $i.[ set off$i ] "$i.[ set off$i ]+[ set len$i ]c"
+                set DIFF_INT(scrinline,$pos,$i,$DIFF_INT(scrinline,$pos,$i)) \
+                    [ list [ set l$i ] [ set off$i ] [ expr [ set off$i ] + [ set len$i ] ] inlinechgtag ]
+                incr DIFF_INT(scrinline,$pos,$i)
+            }
         }
     }
 
