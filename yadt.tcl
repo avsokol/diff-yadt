@@ -7139,45 +7139,39 @@ proc ::Yadt::Fid_Ratcliff_Aux3 { pos l1 l2 l3 s1 off1 len1 s2 off2 len2 s3 off3 
             $WIDGETS(diff_lines_text) tag add inlineinstag 2.$off2 "2.$off2+${len2}c"
             $WIDGETS(diff_lines_text) tag add inlineinstag 3.$off3 "3.$off3+${len3}c"
 
-            if { $off1 != 0 } {
-                set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
-                    [ list $l2 $off2 [ expr $off2 + $len2 ] inlineinstag ]
-                incr DIFF_INT(scrinline,$pos,2)
+            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+                [ list $l2 $off2 [ expr $off2 + $len2 ] inlineinstag ]
+            incr DIFF_INT(scrinline,$pos,2)
 
-                set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
-                    [ list $l3 $off3 [ expr $off3 + $len3 ] inlineinstag ]
-                incr DIFF_INT(scrinline,$pos,3)
-            }
+            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+                [ list $l3 $off3 [ expr $off3 + $len3 ] inlineinstag ]
+            incr DIFF_INT(scrinline,$pos,3)
 
             ::Yadt::Fid_Ratcliff_Aux2 2 3 $pos $l2 $l3 $s2 $off2 $len2 $s3 $off3 $len3
         } elseif { $len2 == 0 } {
             $WIDGETS(diff_lines_text) tag add inlineinstag 1.$off1 "1.$off1+${len1}c"
             $WIDGETS(diff_lines_text) tag add inlineinstag 3.$off3 "3.$off3+${len3}c"
 
-            if { $off2 != 0 } {
-                set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
                 [ list $l1 $off1 [ expr $off1 + $len1 ] inlineinstag ]
-                incr DIFF_INT(scrinline,$pos,1)
+            incr DIFF_INT(scrinline,$pos,1)
 
-                set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
                 [ list $l3 $off3 [ expr $off3 + $len3 ] inlineinstag ]
-                incr DIFF_INT(scrinline,$pos,3)
-            }
+            incr DIFF_INT(scrinline,$pos,3)
 
             ::Yadt::Fid_Ratcliff_Aux2 1 3 $pos $l1 $l3 $s1 $off1 $len1 $s3 $off3 $len3
         } elseif { $len3 == 0 } {
             $WIDGETS(diff_lines_text) tag add inlineinstag 1.$off1 "1.$off1+${len1}c"
             $WIDGETS(diff_lines_text) tag add inlineinstag 2.$off2 "2.$off2+${len2}c"
 
-            if { $off3 != 0 } {
-                set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
-                    [ list $l1 $off1 [ expr $off1 + $len1 ] inlineinstag ]
+            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+                [ list $l1 $off1 [ expr $off1 + $len1 ] inlineinstag ]
                 incr DIFF_INT(scrinline,$pos,1)
 
-                set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
-                    [ list $l2 $off2 [ expr $off2 + $len2 ] inlineinstag ]
-                incr DIFF_INT(scrinline,$pos,2)
-            } 
+            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+                [ list $l2 $off2 [ expr $off2 + $len2 ] inlineinstag ]
+            incr DIFF_INT(scrinline,$pos,2)
 
             ::Yadt::Fid_Ratcliff_Aux2 1 2 $pos $l1 $l2 $s1 $off1 $len1 $s2 $off2 $len2
         }
