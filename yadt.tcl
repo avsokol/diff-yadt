@@ -1,6 +1,15 @@
+#!/bin/sh
+#-*-tcl-*-
+# the next line restarts using wish \
+exec wish "$0" -- ${1+"$@"}
+
+# above header is left for backward compatibility - 
+# YaDT is actually supposed to be run
+# as a standalone starkit executable or via tclkit
+
 ################################################################################
 #
-#  yadt - yet-another-diff-tool
+#  YaDT - yet-another-diff-tool
 #         based on tkdiff tool
 #         allows to compare two or three files with merge possibility
 #
@@ -23,8 +32,8 @@ namespace eval ::Yadt {
 variable ::Yadt::DIFF_TYPE
 variable ::Yadt::MERGE_START
 
-# DIFF_FILES - array: names: 1,2,3
-#            elements: files names
+# DIFF_FILES - array which contains a set of files information:
+#  files paths, labels, merge marks, contents etc.
 variable ::Yadt::DIFF_FILES
 
 # TEXT_WDG - array: names: 1,2,3
@@ -38,7 +47,6 @@ variable ::Yadt::MERGE_INFO_WDG
 variable ::Yadt::MAP_TITLE
 variable ::Yadt::MAP_TITLE_SHORT
 variable ::Yadt::DIFF_CMD
-variable ::Yadt::DIFF3_CMD
 variable ::Yadt::DIFF_IGNORE_SPACES_OPTION "-w"
 variable ::Yadt::VCS_CMD
 
@@ -54,10 +62,10 @@ variable ::Yadt::DIFF_INT
 
 # pdiff - represent region of start and end lines of original diff size, f.i.
 #   For DIFF2:
-#     DIFF_INT(pdiff,<diff_number>) = 
+#     DIFF_INT(<diff_number>,pdiff) = 
 #       <orig_diff_value> start_line1 end_line1 start_line2 end_line2 diff_type
 #   Example:
-#     DIFF_INT(pdiff,12)   = 30,36c187,239 30 36 187 239 c
+#     DIFF_INT(12,pdiff)   = 30,36c187,239 30 36 187 239 c
 #   For DIFF3:
 #     DIFF_INT(<diff_number>,<file_number>,pdiff) =
 #       <orig_diff_value> start_line end_line diff_type
@@ -69,13 +77,10 @@ variable ::Yadt::DIFF_INT
 # scrdiff - represent region of start and end lines of screen diff size, t.i. 
 #     some blank lines in text widgets are taken into account: start and end 
 # lines here means start and end lines inside of a text widget
-# Elements look like the same as pdiff
 #   DIFF2 Example:
-#     DIFF_INT(scrdiff,12) = 30,36c187,239 188 240 188 240 c
+#     DIFF_INT(12,scrdiff) = 188 240 c
 #   DIFF3 Example:
-#     DIFF_INT(29,1,scrdiff)  = 83a 348 351 a
-#     DIFF_INT(29,2,scrdiff)  = 346,349c 348 351 c
-#     DIFF_INT(29,3,scrdiff)  = 346,349c 348 351 c
+#     DIFF_INT(12,scrdiff) = 188 240 cca
 
 # scrtag -  represents tags in text widgets. Used to toggle such tags 
 #     depending on shown_in_lines option
@@ -117,9 +122,16 @@ variable ::Yadt::DIFF2
 
 #-------------------------------------------------------------------------------
 
-variable ::Yadt::DIFF3
+# The folowing array is used for diff3 comparison. As we do not use diff3 anymore,
+# but insetad, we compare 1st file vs 2nd, 1st vs 3rd
+# Format of these variables is the same as for DIFF2
+variable ::Yadt::DIFFS
 
-# DIFF3 contains a result of parsing of the diff3 output:
+#-------------------------------------------------------------------------------
+
+# As we do not use diff3 anymore, DIFF3 contains a result of merging results from
+# above variables, but in the format of diff3 output
+variable ::Yadt::DIFF3
 
 # DIFF3(<index>,which_file)   = <file_number>
 # DIFF3(<index>,1,diff) <chunk_description>
@@ -150,6 +162,42 @@ variable ::Yadt::DIFF3
 # DIFF3(3,2,diff) = 262,263c - taken from 2:262,263c
 # DIFF3(3,3,diff) = 772,774c - taken from 3:772,774c
 #-------------------------------------------------------------------------------
+
+# Array, which contains a common longest substring (cls) elements between files
+# used for comparing 3 files
+# array keys: '12', '13', '23', 'unchanged'
+variable ::Yadt::LCSDATA
+# Format: f.i. LCSDATA(13) - cls between 1st and 3rd files contains
+# 2 lists of lists of equal length:
+# {0 1 2 3 4 7 8 9 10 12 13 14 15 16 18 20 21 22 23 58 59 60 61 62 63 85 86 91}
+# {0 1 2 3 4 7 8 9 10 12 13 14 15 16 18 20 21 22 23 24 25 26 27 28 29 30 31 37}
+# Each i-th element shows equal string numbers (note that lists start from zero)
+# in the 1st and the 3rd files.
+# Example:
+#   19-th element: 1st - 23, 3rd - 23 and
+#   20-th element: 1st - 58, 3rd - 24
+# That means:
+#   line24 from 1st == line 24 from 3rd and as the next element:
+#   line59 from 1st == line 25 from 3rd.
+# obvious that lines 25-58 were deleted in the 1st file.
+# Key 'unchanged' shows lines which are equal in all three files.
+# Such fragments (parts of file) of equal lines are considered to be a kind of
+# 'separator' between file diffs - diff3
+#-------------------------------------------------------------------------------
+
+# Ranges inside diff3 variables - used for expert merge mode
+# RANGES:
+#     keys - ranges id,
+#     values - list of range's 'start_line end_line'
+# RANGES2DIFF:
+#     keys - ranges id,
+#     values 'diff_id', diff3 id, which correspond to current range
+# DIFFS2RANGES:
+#     keys - diff_id, normal diff3_id
+#     values - list of ranges id, which are inside of this diff3 id
+variable ::Yadt::RANGES
+variable ::Yadt::RANGES2DIFF
+variable ::Yadt::DIFF2RANGES
 
 ################################################################################
 # Some helpfull additional procs                                               #
@@ -274,9 +322,8 @@ proc ::Yadt::Exec_To_File { cmd file } {
     lappend exec_cmd >$file
 
     set result [ ::Yadt::Execute_Cmd $exec_cmd ]
-    set stdout [ lindex $result 0 ]
-    set stderr [ lindex $result 1 ]
-    set exitcode [ lindex $result 2 ]
+
+    lassign $result stdout stderr exitcode
 
     ::Yadt::Ignore_No_CVS_Tag_Error stdout -code exitcode
 
@@ -311,7 +358,7 @@ proc ::Yadt::Generate_Next_Id {} {
 
     variable ::Yadt::WDG_OPTIONS
 
-    set WDG_OPTIONS(counter) [ expr { $WDG_OPTIONS(counter) + 1 } ]
+    incr WDG_OPTIONS(counter)
 
     return $WDG_OPTIONS(counter)
 }
@@ -648,6 +695,7 @@ proc ::Yadt::Prepare_File { filename index { chdir "" } } {
 
     set DIFF_FILES(label,$index) "$filename"
     set DIFF_FILES(path,$index) "$filename"
+    set DIFF_FILES(full_path,$index) "[ file join [ pwd ] $filename ]"
     set DIFF_FILES(tmp,$index) 0
 }
 
@@ -773,7 +821,7 @@ proc ::Yadt::Prepare_CVS_Cmd { filename index rev } {
         # If file path is absolute, we get cvsroot and cvsmodule from
         # CVS/Root and CVS/Repository files.
         # If either cvsroot or cvsmodule is specified as a parameter,
-        # we ignore it and show warning msg about it at the yadt start.
+        # we ignore it and show warning msg about it at the YaDT start.
 
         if { $cvsroot != "" } {
             set msg "CVS Root <$cvsroot> shouldn't be specified\
@@ -1004,9 +1052,7 @@ proc ::Yadt::Get_Work_Rev_From_CVS { filename } {
     set vcs_cmd [ list $VCS_CMD -d $cvsroot status $filename ]
 
     set result [ ::Yadt::Run_Cmd_As_Pipe $vcs_cmd ]
-    set stdout [ lindex $result 0 ]
-    set stderr [ lindex $result 1 ]
-    set exitcode [ lindex $result 2 ]
+    lassign $result stdout stderr exitcode
 
     if { $exitcode != 0 } {
         return -code error "Error while executing <$vcs_cmd>:\n$stderr\n$stdout"
@@ -1067,15 +1113,16 @@ proc ::Yadt::Determine_CVS_Module_From_File { filename } {
 
 proc ::Yadt::Read_File { filename args } {
 
-    variable ::Yadt::WDG_OPTIONS
-
     set nonewline [ ::CmnTools::Get_Arg -nonewline args -exists ]
+    set translation [ ::CmnTools::Get_Arg -translation args -default "auto" ]
 
      if { ![ file exist $filename ] || ![ file isfile $filename ] } {
          return -code error "No such file <$filename>"
      }
 
     set fd [ open $filename r ]
+
+    fconfigure $fd -translation $translation
 
     set cmd read
     if { $nonewline } {
@@ -1111,7 +1158,6 @@ proc ::Yadt::Is_Parameter { param } {
         "^--difftag$" -
         "^--chdir$" -
         "^--diff-cmd$" -
-        "^--diff3-cmd$" -
         "^--cvs-cmd$" -
         "^--git-cmd$" -
         "^--initline$" -
@@ -1121,12 +1167,14 @@ proc ::Yadt::Is_Parameter { param } {
         "^--merge$" -
         "^--merge1$" -
         "^--merge2$" -
+        "^--merge_mode$" -
         "^--module$" -
         "^--norc$" -
         "^--auto-merge$" -
         "^--external-call$" -
         "^--textopt$" -
         "^--title$" -
+        "^--translation$" -
         "^--d$" -
         "^-d$" -
         "^-r$" - 
@@ -1183,7 +1231,6 @@ proc ::Yadt::Parse_Args {} {
     variable ::Yadt::MERGE_START
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::DIFF_CMD
-    variable ::Yadt::DIFF3_CMD
     variable ::Yadt::VCS_CMD
     variable ::Yadt::OPTIONS
     variable ::Yadt::WDG_OPTIONS
@@ -1200,7 +1247,6 @@ proc ::Yadt::Parse_Args {} {
 
     set chdir ""
     set DIFF_CMD ""
-    set DIFF3_CMD ""
     set VCS_CMD ""
     set diff_option 2
     set OPTIONS(vcs_needed) 0
@@ -1264,10 +1310,6 @@ proc ::Yadt::Parse_Args {} {
             "^--diff-cmd$" {
                 incr argindex
                 set DIFF_CMD [ lindex $argv $argindex ]
-            }
-            "^--diff3-cmd$" {
-                incr argindex
-                set DIFF3_CMD [ lindex $argv $argindex ]
             }
             "^--cvs-cmd$" {
                 incr argindex
@@ -1333,6 +1375,11 @@ proc ::Yadt::Parse_Args {} {
                 }
                 set WDG_OPTIONS(merge2set) 1
             }
+            "^--merge_mode$" {
+                incr argindex 
+                set OPTIONS(merge_mode) [ lindex $argv $argindex ]
+                set WDG_OPTIONS(merge_mode,is_set) 1
+            }
             "^--module$" {
                 # parameter specifies module in cvs repository
                 #  - usefull when comparing file in CVS
@@ -1359,6 +1406,10 @@ proc ::Yadt::Parse_Args {} {
                 incr argindex
                 set custom_title [ lindex $argv $argindex ]
                 set WDG_OPTIONS(yadt_title) $custom_title
+            }
+            "^--translation$" {
+                incr argindex
+                set OPTIONS(translation) [ lindex $argv $argindex ]
             }
             "^--conflict$" {
                 set conflict 1
@@ -1668,6 +1719,14 @@ proc ::Yadt::Parse_Args {} {
         }
     }
 
+    if { $DIFF_TYPE == 2 } {
+        set OPTIONS(merge_mode) "normal"
+    }
+
+    if { $OPTIONS(merge_mode) ni { normal expert } } {
+        set OPTIONS(merge_mode) normal
+    }
+
     set stand_alone [ ::Yadt::Is_Standalone_Call ]
 
     set OPTIONS(vcs) "files"
@@ -1681,18 +1740,16 @@ proc ::Yadt::Parse_Args {} {
     }
 
     if { $OPTIONS(vcs_needed) && $VCS_CMD == "" } {
-        if { $stand_alone && $OPTIONS(vcs) == "cvs" } {
-            ::Yadt::Extract_Tools_And_Update_Cmd -$OPTIONS(vcs)
-        } else {
-            set VCS_CMD $OPTIONS(vcs)
+        set VCS_CMD $OPTIONS(vcs)
+        if { $stand_alone && $VCS_CMD == "cvs" } {
+            set VCS_CMD [ ::Yadt::Extract_Tool_And_Update_Cmd -$OPTIONS(vcs) ]
         }
     }
 
     if { $DIFF_CMD == "" } {
+        set DIFF_CMD diff
         if { $stand_alone } {
-            ::Yadt::Extract_Tools_And_Update_Cmd -diff
-        } else {
-            set DIFF_CMD diff
+            set DIFF_CMD [ ::Yadt::Extract_Tool_And_Update_Cmd -diff ]
         }
     }
 
@@ -1706,13 +1763,6 @@ proc ::Yadt::Parse_Args {} {
         3 {
             if { [ info exists DIFF_FILES(merge2) ] && ![ info exists DIFF_FILES(merge1) ] } {
                 return -code $ERROR_CODES(argerror) "Invalid parameters specified (merge file isn't defined)."
-            }
-            if { $DIFF3_CMD == "" } {
-                if { $stand_alone } {
-                    ::Yadt::Extract_Tools_And_Update_Cmd -diff3
-                } else {
-                    set DIFF3_CMD diff3
-                }
             }
             if ![ info exists DIFF_FILES(merge2) ] {
                 set MERGE_START 3
@@ -1754,16 +1804,20 @@ proc ::Yadt::Is_Standalone_Call {} {
 
 #===============================================================================
 
-proc ::Yadt::Extract_Tools_And_Update_Cmd { tool_name } {
+proc ::Yadt::Extract_Tool_And_Update_Cmd { tool_name } {
 
+    global tcl_platform
     variable ::Yadt::OPTIONS
-    variable ::Yadt::DIFF_CMD
-    variable ::Yadt::DIFF3_CMD
-    variable ::Yadt::VCS_CMD
 
     if { !$OPTIONS(is_starkit) } return
 
     if ![ ::Yadt::Is_Standalone_Call ] return
+
+    set tool_name [ string trimleft $tool_name "-" ]
+
+    if { $tool_name ni [ list cvs diff ] } {
+        return -code error "Unsupported tool name <$tool_name>"
+    }
 
     set difftools_topdir [ file dirname $::starkit::topdir ]
     if ![ file writable $difftools_topdir ] {
@@ -1771,34 +1825,33 @@ proc ::Yadt::Extract_Tools_And_Update_Cmd { tool_name } {
     }
     set tools_path [ file join $difftools_topdir $OPTIONS(difftools_subdir) ]
 
-    switch -- $tool_name {
-        -diff {
-            set DIFF_CMD [ ::Yadt::Extract_Tool diff $tools_path ]
-        }
-        -diff3 {
-            set DIFF3_CMD [ ::Yadt::Extract_Tool diff3 $tools_path ]
-        }
-        -cvs {
-            set VCS_CMD [ ::Yadt::Extract_Tool cvs $tools_path ]
-        }
-        default {
-            return -code error "Unsupported tool name <$tool_name>"
+    set executable $tool_name
+    if { $tcl_platform(platform) == "windows" } {
+        set executable $executable.exe
+    }
+
+    set tools_rc [ file join $OPTIONS(difftools_path) .toolsrc ]
+    set file_content [ ::Yadt::Read_File $tools_rc ]
+
+    foreach line [ split $file_content \n ] {
+        lassign [ split $line ] name exe
+        if { $name == $tool_name } {
+            set executable $exe
+            break
         }
     }
+
+    return [ ::Yadt::Extract_Tool $executable $tools_path ]
 }
 
 #===============================================================================
 
 proc ::Yadt::Extract_Tool { tool path } {
 
-    variable ::Yadt::OPTIONS
     global tcl_platform
+    variable ::Yadt::OPTIONS
 
     set replace 1
-
-    if { $tcl_platform(platform) == "windows" } {
-        set tool $tool.exe
-    }
 
     set src_tool_path [ file join $OPTIONS(difftools_path) $tool ]
     set dest_tool_path [ file join $path $tool ]
@@ -1940,7 +1993,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.256 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.262 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -1958,6 +2011,7 @@ proc ::Yadt::Run {} {
     set OPTIONS(script_path) [ file normalize [ ::Yadt::Make_Absolute_Real_Path [ info script ] ] ]
     set cur_pwd [ file dirname $OPTIONS(script_path) ]
     lappend auto_path $cur_pwd
+    lappend auto_path [ file join $cur_pwd tcllib1.18 ]
 
     set WDG_OPTIONS(yadt_title) "Yadt"
 
@@ -1968,6 +2022,8 @@ proc ::Yadt::Run {} {
 
     package require BWidget 1.8
     package require CmnTools
+    package require YaLcs
+    package require struct::list
 
     ::Yadt::Init_Opts
     ::Yadt::Load_Images
@@ -1996,6 +2052,21 @@ proc ::Yadt::Run {} {
              Error: <$errmsg>" \
             "ok" \
             "warning"
+    }
+
+    switch -- $OPTIONS(translation) {
+        "windows" -
+        "unix" -
+        "auto" {
+        }
+        default {
+            ::Yadt::Msg_Box "Warning" \
+                "Unsupported EOL translation is set: <$OPTIONS(translation)>.\
+                 \nTranslation type <auto> will be used instead."\
+                "ok" \
+                "warning"
+            set OPTIONS(translation) auto
+        }
     }
 
     ::Yadt::Draw_Toplevel
@@ -2040,6 +2111,7 @@ proc ::Yadt::Run {} {
     set WDG_OPTIONS(active_window) $TEXT_WDG(1)
 
     ::Yadt::Create_Popup_Menu
+    ::Yadt::Create_Popup_Merge_Mode_Switch_Menu
 
     ::Yadt::Toggle_Diff_Lines
 
@@ -2074,7 +2146,6 @@ proc ::Yadt::Exit { { err_code 0 } { force 0 } } {
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::MERGE_START
     variable ::Yadt::MERGE_TEXT_WDG
-    variable ::Yadt::CURRENT_MERGES
 
     if { !$force } {
         if { [ info exists OPTIONS(preview_shown) ] && $OPTIONS(preview_shown) } {
@@ -2168,8 +2239,6 @@ proc ::Yadt::Get_Usage_String { } {
         \t\t- if necessary specify the directory where files to be compared are located in\n\n\
         \t --diff-cmd <diff path>\n\
         \t\t- if necessary specify the alternative diff utility path\n\n\
-        \t --diff3-cmd <diff3 path>\n\
-        \t\t- if necessary specify the alternative diff3 utility path\n\n\
         \t --cvs-cmd <cvs path>\n\
         \t\t- if necessary specify the alternative directory where cvs util is located\n\n\
         \t --git-cmd <git path>\n\
@@ -2179,7 +2248,7 @@ proc ::Yadt::Get_Usage_String { } {
         \t --module <cvsmodule>\n\
         \t\t - if necessary specify cvs module. Usually used together with --d parameter.\n\n\
         \t --ge\[ometry\] <width>x<height>\n\
-        \t\t- if necessary specify yadt geometry as, e.g., 800x600\n\n\
+        \t\t- if necessary specify YaDT geometry as, e.g., 800x600\n\n\
         \t --ho\[rizontal\] | --ve\[rtical\]\n\
         \t\t- if necessary specify the $me layout, default - vertical\n\n\
         \t --config <config_file>\n\
@@ -2187,7 +2256,11 @@ proc ::Yadt::Get_Usage_String { } {
         \t --norc\n\
         \t\t- avoid using $me config file\n\n\
         \t --auto-merge\n\
-        \t\t- for 3-way merge, try to resolve conflicts automatically"
+        \t\t- for 3-way merge, try to resolve conflicts automatically\n\n
+        \t--translation <translation>\n\
+        \t\t - defines the way of handling line ending (EOL) in files being compared. Acceptable values: <windows>, <unix> or <auto>\n\n
+        \t--merge_mode <merge_mode>\n\
+         \t\t - defines a 3-way merge mode. Acceptable values: <normal> or <expert>. Default is <normal>"
 }
 
 #===============================================================================
@@ -2290,7 +2363,9 @@ proc ::Yadt::Init_Opts {} {
     # cvs_ver_from_entry - the way of determining working CVS version
     #     1 - from CVS/Entries file
     #     0 - from "cvs status" output
-    # Note: any operation with cvs can slow down the whole yadt execution time
+    # Note: any operation with cvs can slow down the whole YaDT execution time
+    #
+    # Paramater merge_mode accepts the following values: normal, expert
     array set OPTIONS {
         autocenter   1
         automerge    0
@@ -2299,7 +2374,9 @@ proc ::Yadt::Init_Opts {} {
         cvsmodule   ""
         diff_layout  "vertical"
         geometry     ""
+        merge_mode   "normal"
         use_cvs_diff 0
+        use_diff     1
         preview_shown   0
         save_always_enabled 1
         show_diff_lines 1
@@ -2313,6 +2390,16 @@ proc ::Yadt::Init_Opts {} {
         tagtext      1
         vcs          ""
         cvs_ver_from_entry 1
+    }
+
+    switch -- $tcl_platform(platform) {
+        "unix" -
+        "windows" {
+            set OPTIONS(translation) $tcl_platform(platform)
+        }
+        default {
+            return -code error "Unsupported platform <$tcl_platform(platform)>"
+        }
     }
 
     array set WDG_OPTIONS {
@@ -2404,6 +2491,7 @@ proc ::Yadt::Init_Graphic {} {
             textopt    "-background white -foreground black -font $OPTIONS(default_font)"
             sel        "-background blue -foreground white"
             currtag    "-background $MAP_COLOR(bg,currtag) -foreground $MAP_COLOR(fg,currtag)"
+            textcurrtag   "-borderwidth 2 -relief groove"
             difftag    "-background $MAP_COLOR(bg,difftag) -foreground $MAP_COLOR(fg,difftag)"
             deltag     "-background $MAP_COLOR(bg,deltag) -foreground $MAP_COLOR(fg,deltag)"
             instag     "-background $MAP_COLOR(bg,instag) -foreground $MAP_COLOR(fg,instag)"
@@ -2431,6 +2519,7 @@ proc ::Yadt::Init_Graphic {} {
             textopt    "-background white -foreground black -font $OPTIONS(default_font)"
             sel        "-background blue -foreground white"
             currtag    "-background black -foreground white"
+            textcurrtag   "-borderwidth 2 -relief groove"
             difftag    "-background white -foreground black"
             deltag     "-background black -foreground white"
             instag     "-background black -foreground white"
@@ -2545,12 +2634,20 @@ proc ::Yadt::Wipe {} {
 
     variable ::Yadt::DIFF2
     variable ::Yadt::DIFF3
+    variable ::Yadt::DIFFS
+    variable ::Yadt::DIFF_FILES
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::CURRENT_MERGES
+    variable ::Yadt::LCSDATA
+    variable ::Yadt::WDG_OPTIONS
+    variable ::Yadt::RANGES
+    variable ::Yadt::RANGES2DIFF
+    variable ::Yadt::DIFF2RANGES
 
     array unset DIFF_INT
     array unset CURRENT_MERGES
+    array unset LCSDATA
 
     set DIFF_INT(pos) 0
     set DIFF_INT(count) 0
@@ -2560,14 +2657,24 @@ proc ::Yadt::Wipe {} {
     set DIFF_INT(scrinline,0,1) 0
     set DIFF_INT(scrinline,0,2) 0
 
+    set WDG_OPTIONS(mapheight) -1
+
     switch -- $DIFF_TYPE {
         2 {
             set DIFF2(diff) ""
         }
         3 {
             array unset DIFF3
+            array unset DIFFS
+            array unset DIFF_FILES strings,*
+            array unset DIFF_FILES test_strings,*
+            array unset DIFF_FILES content,*
             set DIFF_INT(delta,3) 0
             set DIFF_INT(scrinline,0,3) 0
+
+            array unset RANGES
+            array unset RANGES2DIFF
+            array unset DIFF2RANGES
         }
     }
 }
@@ -2589,15 +2696,39 @@ proc ::Yadt::Prepare_Files_From_Queue_And_Update_Labels {} {
 
 #===============================================================================
 
+proc ::Yadt::Get_Line_End_Translation {} {
+
+    variable ::Yadt::OPTIONS
+
+    set translation auto
+    switch -- $OPTIONS(translation) {
+        "windows" {
+            set translation crlf
+        }
+        "unix" {
+            set translation lf
+        }
+        "auto" {
+            set translation auto
+        }
+        default {
+            # actually, shouldn't be here as translation is checked in main proc
+            return -code error "Unsupported EOL translation: <$OPTIONS(translation)>"
+        }
+    }
+}
+
+#===============================================================================
+
 proc ::Yadt::Load_Files {} {
 
     variable ::Yadt::DIFF_TYPE
-    variable ::Yadt::MERGE_START
     variable ::Yadt::DIFF_FILES
-    variable ::Yadt::MERGE_TEXT_WDG
-    variable ::Yadt::MERGE_INFO_WDG
     variable ::Yadt::TEXT_WDG
     variable ::Yadt::OPTIONS
+    variable ::Yadt::WIDGETS
+
+    set translation [ ::Yadt::Get_Line_End_Translation ]
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
         if { ![ info exists DIFF_FILES(path,$i) ] && \
@@ -2605,11 +2736,11 @@ proc ::Yadt::Load_Files {} {
             continue
         }
 
-        set content [ ::Yadt::Get_File_Content $i ]
+        set DIFF_FILE(content,$i) [ ::Yadt::Get_File_Content $i -translation $translation ]
 
         # load file in diff widget
         $TEXT_WDG($i) delete 1.0 end
-        $TEXT_WDG($i) insert 1.0 $content
+        $TEXT_WDG($i) insert 1.0 $DIFF_FILE(content,$i)
 
         # In case content recieved from cvs diff,
         # it could have no newline at the end
@@ -2619,21 +2750,29 @@ proc ::Yadt::Load_Files {} {
         }
 
         if { $i == 1 } {
-            ::Yadt::Load_Merge_File $content
+            ::Yadt::Load_Merge_File $DIFF_FILE(content,1)
         }
+        update
     }
 }
 
 #===============================================================================
 
-proc ::Yadt::Get_File_Content { i } {
+proc ::Yadt::Get_File_Content { i args } {
 
     variable ::Yadt::DIFF_FILES
+
+    set nonewline   [ ::CmnTools::Get_Arg -nonewline   args -exists ]
+    set translation [ ::CmnTools::Get_Arg -translation args -default "auto" ]
 
     if { $DIFF_FILES(path,$i) == "" } {
         set content $DIFF_FILES(content,$i)
     } else {
-        set content [ ::Yadt::Read_File $DIFF_FILES(path,$i) ]
+        set cmd [ list ::Yadt::Read_File $DIFF_FILES(path,$i) -translation $translation ]
+        if { $nonewline } {
+            lappend cmd -nonewline
+        }
+        set content [ eval $cmd ]
     }
 
     return $content
@@ -2869,23 +3008,21 @@ proc ::Yadt::Save_CVS_Like_Merge_File {} {
     for { set i 1 } { $i <= $num_diff } { incr i } {
 
         # Start diff line
-        foreach [ list thisdiff(1) s(1) e(1) type(1) ] \
-            $DIFF_INT($i,1,scrdiff) {}
-        set tmp_start $s(1)
-        set tmp_end $e(1)
+        foreach [ list tmp_start tmp_end dt ] $DIFF_INT($i,scrdiff) {}
 
         switch -- $DIFF3($i,which_file) {
             0 {
                 # Left content
                 set add_content "<<<<<<< $file2"
 
-                foreach [ list thisdiff(3) s(3) e(3) type(3) ] \
+                foreach [ list thisdiff s(3) e(3) type(3) ] \
                     $DIFF_INT($i,3,pdiff) {}
                 set add_lines_num [ expr { $e(3) - $s(3) } ]
                 if { $type(3) != "a" } {
                     incr add_lines_num
                 }
-                set content [ $TEXT_WDG(3) get $tmp_start.0 [ expr { $tmp_start + $add_lines_num } ].0-1char ]
+
+                set content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff_Id $i 3 ] 0 ] \n ]
                 if { $content != "" } {
                     append add_content "\n$content"
                 }
@@ -2893,13 +3030,14 @@ proc ::Yadt::Save_CVS_Like_Merge_File {} {
                 # Right content
                 append add_content "\n======= $file_ancestor"
 
-                foreach [ list thisdiff(2) s(2) e(2) type(2) ] \
+                foreach [ list thisdiff s(2) e(2) type(2) ] \
                     $DIFF_INT($i,2,pdiff) {}
                 set add_lines_num [ expr { $e(2) - $s(2) } ]
                 if { $type(2) != "a" } {
                     incr add_lines_num
                 }
-                set content [ $TEXT_WDG(2) get $tmp_start.0 [ expr { $tmp_start + $add_lines_num } ].0-1char ]
+
+                set content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff_Id $i 2 ] 0 ] \n ]
                 if { $content != "" } {
                     append add_content "\n$content"
                 }
@@ -2908,24 +3046,26 @@ proc ::Yadt::Save_CVS_Like_Merge_File {} {
             }
             2 {
                 # LINES num to add
-                foreach [ list thisdiff(2) s(2) e(2) type(2) ] \
+                foreach [ list thisdiff s(2) e(2) type(2) ] \
                     $DIFF_INT($i,2,pdiff) {}
                 set add_lines_num [ expr { $e(2) - $s(2) } ]
                 if { $type(2) != "a" } {
                     incr add_lines_num
                 }
-                set add_content [ $TEXT_WDG(2) get $tmp_start.0 [ expr { $tmp_start + $add_lines_num } ].0-1char ]
+
+                set add_content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff_Id $i 2 ] 0 ] \n ]
             }
             1 -
             3 {
                 # LINES num to add
-                foreach [ list thisdiff(3) s(3) e(3) type(3) ] \
+                foreach [ list thisdiff s(3) e(3) type(3) ] \
                     $DIFF_INT($i,3,pdiff) {}
                 set add_lines_num [ expr { $e(3) - $s(3) } ]
                 if { $type(3) != "a" } {
                     incr add_lines_num
                 }
-                set add_content [ $TEXT_WDG(3) get $tmp_start.0 [ expr { $tmp_start + $add_lines_num } ].0-1char ]
+
+                set add_content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff_Id $i 3 ] 0 ] \n ]
             }
         }
 
@@ -3037,6 +3177,7 @@ proc ::Yadt::Start_New_Diff {} {
     }
 
     ::Yadt::Do_Diff
+    after 1000 { ::Yadt::Status_Msg menustatus "" }
     update
 
     ::Yadt::Go_To_Initline
@@ -3057,14 +3198,12 @@ proc ::Yadt::Start_New_Diff {} {
 
 proc ::Yadt::Do_Diff {} {
 
-    variable ::Yadt::WDG_OPTIONS
-
+    ::Yadt::Status_Msg menustatus "Calculating differences. Please Wait..."
     ::Yadt::Exec_Diff
+    ::Yadt::Status_Msg menustatus "Calculating differences. Please Wait...Done"
     ::Yadt::Update_Num_Lines
     ::Yadt::Add_Lines
     ::Yadt::Mark_Diffs
-
-    set WDG_OPTIONS(mapheight) -1
     ::Yadt::Map_Resize
 }
 
@@ -3075,6 +3214,7 @@ proc ::Yadt::Exec_Diff {} {
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::OPTIONS
+    variable ::Yadt::DIFF2
 
     set file_check 0
     switch -- $OPTIONS(vcs) {
@@ -3110,7 +3250,7 @@ proc ::Yadt::Exec_Diff {} {
             if { $OPTIONS(vcs) == "cvs" && $OPTIONS(vcs_needed) && $OPTIONS(use_cvs_diff) } {
                 ::Yadt::CVS_Diff
             } else {
-                ::Yadt::Exec_Diff2
+                set DIFF2(diff) [ ::Yadt::Exec_Diff2 1 2 ]
             }
         }
         3 {
@@ -3124,94 +3264,81 @@ proc ::Yadt::Exec_Diff {} {
 
 #===============================================================================
 
-proc ::Yadt::Exec_Diff2 {} {
+proc ::Yadt::Exec_Diff2 { id1 id2 { upvar_lcsdata "" } } {
 
-    variable ::Yadt::DIFF2
     variable ::Yadt::DIFF_CMD
     variable ::Yadt::DIFF_IGNORE_SPACES_OPTION
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::OPTIONS
-    global errorCode
+    variable ::Yadt::DIFF_TYPE
 
-    set diff_stdout ""
-
-    set cmd [ list $DIFF_CMD ]
-    if { $OPTIONS(ignore_blanks) } {
-        lappend cmd $DIFF_IGNORE_SPACES_OPTION
-    }
-    lappend cmd -- $DIFF_FILES(path,1) $DIFF_FILES(path,2)
-
-    set result [ ::Yadt::Execute_Cmd $cmd ]
-
-    set diff_stdout [ lindex $result 0 ]
-    set stderr [ lindex $result 1 ]
-    set exitcode [ lindex $result 2 ]
-
-    if { $exitcode < 0 || $exitcode > 1 || $stderr != "" } {
-        return -code error "Diff-utility failed:\nExitcode: <$exitcode>\nError message: <$stderr>"
+    if { $upvar_lcsdata != "" } {
+        upvar $upvar_lcsdata lcsdata
     }
 
-    ::Yadt::Analyze_Out_Diff2 $diff_stdout -diff
+    if { $OPTIONS(use_diff) } {
+        set diff_stdout ""
+
+        set cmd [ list $DIFF_CMD ]
+        if { $OPTIONS(ignore_blanks) } {
+            lappend cmd $DIFF_IGNORE_SPACES_OPTION
+        }
+        lappend cmd -- $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
+
+        set result [ ::Yadt::Execute_Cmd $cmd ]
+
+        lassign $result diff_stdout stderr exitcode
+
+        if { $exitcode < 0 || $exitcode > 1 || $stderr != "" } {
+            return -code error "Diff-utility failed:\nExitcode: <$exitcode>\nError message: <$stderr>"
+        }
+
+        set diffs [ ::Yadt::Analyze_Out_Diff2 $diff_stdout -diff ]
+
+        if { $DIFF_TYPE == 2 } {
+            return $diffs
+        }
+
+        ::Yadt::Get_File_Strings $id1 $id2
+
+        set len($id1) [ llength $DIFF_FILES(strings,$id1) ]
+        set len($id2) [ llength $DIFF_FILES(strings,$id2) ]
+
+        set lcsdata [ ::YaLcs::Convert_Diff2_To_Lcs_Data $diffs $id1 $id2 $len($id1) $len($id2) ]
+
+        while {1} {
+            set test_lcsdata [ ::YaLcs::Try_To_Split_Diffs \
+                                   $diffs $id1 $id2 $lcsdata \
+                                   $DIFF_FILES(strings,$id1) $DIFF_FILES(strings,$id1) ]
+            if { $test_lcsdata == $lcsdata } {
+                break
+            }
+            set lcsdata $test_lcsdata
+            set diffs [ ::YaLcs::Convert_Lcs_Data_To_Diff2 $lcsdata $len($id1) $len($id2) ]
+        }
+    } else {
+        # Even in case we do not have diff, we can compare files manually
+        # Although, in some cases performance is not good, see
+        # ::struct::list::LlongestCommonSubsequence2 description for details
+        set diffs [ ::YaLcs::Compare2 $id1 $id2 lcsdata ]
+    }
+
+    return $diffs
 }
 
 #===============================================================================
 
 proc ::Yadt::Exec_Diff3 {} {
 
+    variable ::Yadt::DIFFS
     variable ::Yadt::DIFF3
-    variable ::Yadt::DIFF_CMD
-    variable ::Yadt::DIFF3_CMD
-    variable ::Yadt::DIFF_IGNORE_SPACES_OPTION
-    variable ::Yadt::DIFF_FILES
-    variable ::Yadt::OPTIONS
-    global errorCode
+    variable ::Yadt::LCSDATA
 
-    set diff_stdout ""
+    set DIFFS(12) [ ::Yadt::Exec_Diff2 1 2 LCSDATA(12) ]
+    set DIFFS(13) [ ::Yadt::Exec_Diff2 1 3 LCSDATA(13) ]
+    set DIFFS(13) [ ::Yadt::Exec_Diff2 2 3 LCSDATA(23) ]
 
-    set cmd [ list $DIFF3_CMD ]
-
-    if { [ file pathtype $DIFF_CMD ] == "absolute" } {
-        lappend cmd --diff-program $DIFF_CMD
-    }
-
-    if { $OPTIONS(ignore_blanks) } {
-        lappend cmd $DIFF_IGNORE_SPACES_OPTION
-    }
-    lappend cmd -- $DIFF_FILES(path,1) $DIFF_FILES(path,2) $DIFF_FILES(path,3)
-
-    set result [ ::Yadt::Execute_Cmd $cmd ]
-
-    set diff_stdout [ lindex $result 0 ]
-    set stderr [ lindex $result 1 ]
-    set exitcode [ lindex $result 2 ]
-
-    if { $exitcode < 0 || $exitcode > 1 || $stderr != "" } {
-        return -code error "Diff3-utility failed:\nExitcode: <$exitcode>\nError message: <$stderr>"
-    }
-
-    set lines [ split $diff_stdout "\n" ]
-
-    set diff_num 0
-
-    foreach line $lines {
-        if { $line == "====" || [ regexp {^====[1|2|3]$} $line ] } {
-
-             incr diff_num
-
-             set t1 [ regsub {====} $line "" ]
-             if { $t1 == "" } {
-                 set t1 0
-             }
-             set DIFF3($diff_num,which_file) $t1
-             continue
-        }
-
-        if [ regexp {^[1|2|3]:[0-9,]+[c|a]{1}$} $line f1 ] {
-            set ind [ string range $f1 0 0 ]
-            set DIFF3($diff_num,$ind,diff) [ string range $f1 2 end ]
-            continue
-        }
-    }
+    set LCSDATA(unchanged) [ ::YaLcs::Find_Unchanged_Diff3_Lines_From_Lcs_Data LCSDATA ]
 }
 
 #===============================================================================
@@ -3245,9 +3372,7 @@ proc ::Yadt::CVS_Diff {} {
 
     set result [ ::Yadt::Run_Cmd_As_Pipe $cmd ]
 
-    set diff_stdout [ lindex $result 0 ]      
-    set stderr [ lindex $result 1 ]
-    set exitcode [ lindex $result 2 ]
+    lassign $result diff_stdout stderr exitcode
 
     ::Yadt::Ignore_No_CVS_Tag_Error stderr
 
@@ -3255,17 +3380,18 @@ proc ::Yadt::CVS_Diff {} {
         return -code error "Diff-utility failed:\nExitcode: <$exitcode>\nError message: <$stderr>"
     }
 
-    ::Yadt::Analyze_Out_Diff2 $diff_stdout -cvs
+    set diffs [ ::Yadt::Analyze_Out_Diff2 $diff_stdout -cvs ]
+
+    return $diffs
 }
 
 #===============================================================================
 
 proc ::Yadt::Analyze_Out_Diff2 { content from } {
 
-    variable ::Yadt::DIFF2
     variable ::Yadt::DIFF_FILES
 
-    set DIFF2(diff) {}
+    set diffs {}
     set lines [ split $content "\n" ]
 
     switch -- $from {
@@ -3294,9 +3420,11 @@ proc ::Yadt::Analyze_Out_Diff2 { content from } {
 
     foreach line $lines {
         if { [ string match {[0-9]*} $line ] } {
-            lappend DIFF2(diff) $line
+            lappend diffs $line
         }
     }
+
+    return $diffs
 }
 
 #===============================================================================
@@ -3394,210 +3522,170 @@ proc ::Yadt::Analyze_Diff3 { diff_id file_id line } {
 
 #===============================================================================
 
-proc ::Yadt::Add_Diff2_Line { pos } {
+proc ::Yadt::Collect_Diff3_From_Lcs { prev_idx_arr idx_arr diff_count } {
+
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::DIFF3
+    variable ::Yadt::DIFF_INT
+
+    upvar $prev_idx_arr prev_idx
+    upvar $idx_arr idx
+    upvar $diff_count count
+
+    if { $idx(1) <= [ expr $prev_idx(1) + 1 ] && \
+             $idx(2) <= [ expr $prev_idx(2) + 1 ] && \
+             $idx(3) <= [ expr $prev_idx(3) + 1 ] } {
+        return
+    }
+
+    incr count
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        set diff_start($i) [ expr $prev_idx($i) + 2 ]
+        set diff_end($i) $idx($i)
+        set diff_size($i) [ expr $diff_end($i) - $diff_start($i) + 1 ]
+
+        set op($i) "c"
+        if { $diff_size($i) == 0 } {
+            set op($i) "a"
+            incr diff_start($i) -1
+        }
+
+        set ds($i) $diff_start($i)
+        if { $diff_end($i) > $diff_start($i) && $op($i) != "a" } {
+            append ds($i) ",$diff_end($i)"
+        }
+
+        set DIFF3($count,$i,diff) $ds($i)$op($i)
+        set DIFF_INT($count,$i,pdiff) \
+            [ ::Yadt::Analyze_Diff3 $count $i $DIFF3($count,$i,diff) ]
+
+        foreach [ list DIFF_INT($count,$i,strings) DIFF_INT($count,$i,test_strings) ] \
+            [ ::Yadt::Gather_File_Strings_By_Diff_Id $count $i ] { }
+    }
+    lappend DIFF3(diffs) :$ds(1)$op(1):$ds(2)$op(2):$ds(3)$op(3)
+
+    set DIFF3($count,which_file) [ ::Yadt::Find_Which_File_For_Diff_Id $count ]
+}
+
+#===============================================================================
+
+proc ::Yadt::Find_Which_File_For_Diff_Id { diff_id } {
+
+    variable ::Yadt::DIFF_INT
+
+    if { $DIFF_INT($diff_id,1,strings) == $DIFF_INT($diff_id,2,strings) } {
+        return 3
+    }
+    if { $DIFF_INT($diff_id,1,strings) == $DIFF_INT($diff_id,3,strings) } {
+        return 2
+    }
+    if { $DIFF_INT($diff_id,2,strings) == $DIFF_INT($diff_id,3,strings) } {
+        return 1
+    }
+
+    return 0
+}
+
+#===============================================================================
+
+proc ::Yadt::Align_One_Diff2 { diff_id { id1 1 } { id2 2 } } {
 
     variable ::Yadt::DIFF_INT
     variable ::Yadt::TEXT_WDG
     variable ::Yadt::TEXT_NUM_WDG
     variable ::Yadt::TEXT_INFO_WDG
 
-    foreach [ list thisdiff s1 e1 s2 e2 type ] $DIFF_INT(pdiff,$pos) { }
+    foreach "thisdiff s($id1) e($id1) s($id2) e($id2) type" $DIFF_INT($diff_id,pdiff) { }
 
-    set size(1) [ expr { $e1 - $s1 } ]
-    set size(2) [ expr { $e2 - $s2 } ]
+    set size($id1) [ expr { $e($id1) - $s($id1) } ]
+    set size($id2) [ expr { $e($id2) - $s($id2) } ]
 
-    incr s1 $DIFF_INT(delta,1)
-    incr s2 $DIFF_INT(delta,2)
+    incr s($id1) $DIFF_INT(delta,$id1)
+    incr s($id2) $DIFF_INT(delta,$id2)
 
     switch -- $type {
         "a" {
             set lefttext " " ;# insert
             set righttext "+"
-            set idx 1
-            set count [ expr { $size(2) + 1 } ]
-            incr s1
-            incr size(2)
+            set idx $id1
+            set count [ expr { $size($id2) + 1 } ]
+            incr s($id1)
+            incr size($id2)
         }
         "d" {
             set lefttext "-" ;# delete
             set righttext " "
-            set idx 2
-            set count [ expr { $size(1) + 1 } ]
-            incr s2
-            incr size(1)
+            set idx $id2
+            set count [ expr { $size($id1) + 1 } ]
+            incr s($id2)
+            incr size($id1)
         }
         "c" {
             set lefttext "!" ;# change
             set righttext "!" ;# change
-            set idx [ expr { $size(1) < $size(2) ? 1 : 2 } ]
-            set count [ expr { abs($size(1) - $size(2)) } ]
-            incr size(1)
-            incr size(2)
+            set idx [ expr { $size($id1) < $size($id2) ? $id1 : $id2 } ]
+            set count [ expr { abs($size($id1) - $size($id2)) } ]
+            incr size($id1)
+            incr size($id2)
         }
     }
 
-    set textWidget $TEXT_WDG($idx)
-    set infoWidget $TEXT_INFO_WDG($idx)
-    set cbWidget $TEXT_NUM_WDG($idx)
-
-    set line [ expr { $s1 + $size($idx) } ]
+    set line [ expr $s($id1) + $size($idx) ]
 
     for { set i 0 } { $i < $count } { incr i } {
-        $textWidget insert $line.0 "\n"
-        $infoWidget insert $line.0 "\n"
-        $cbWidget insert $line.0 "\n"
+        foreach t_wdg "$TEXT_WDG($idx) $TEXT_INFO_WDG($idx) $TEXT_NUM_WDG($idx)" {
+            $t_wdg insert $line.0 "\n"
+        }
     }
 
     incr size($idx) $count
-    set e1 [ expr { $s1 + $size(1) - 1 } ]
-    set e2 [ expr { $s2 + $size(2) - 1 } ]
+    set e($id1) [ expr { $s($id1) + $size($id1) - 1 } ]
+    set e($id2) [ expr { $s($id2) + $size($id2) - 1 } ]
     incr DIFF_INT(delta,$idx) $count
 
-    for { set i $s1 } { $i <= $e1 } { incr i } {
-        $TEXT_INFO_WDG(1) insert $i.0 $lefttext
-        $TEXT_INFO_WDG(2) insert $i.0 $righttext
+    for { set i $s($id1) } { $i <= $e($id1) } { incr i } {
+        $TEXT_INFO_WDG($id1) insert $i.0 $lefttext
+        $TEXT_INFO_WDG($id2) insert $i.0 $righttext
     }
 
-    set DIFF_INT(scrdiff,$DIFF_INT(count)) [ list $thisdiff $s1 $e1 $s2 $e2 $type ]
+    set DIFF_INT($DIFF_INT(count),scrdiff) "$s($id1) $e($id1) $type"
 
-    set DIFF_INT(scrinline,$pos,1) 0
-    set DIFF_INT(scrinline,$pos,2) 0
+    set DIFF_INT(scrinline,$diff_id,$id1) 0
+    set DIFF_INT(scrinline,$diff_id,$id2) 0
     set numlines [ ::CmnTools::MaxN \
-                       [ expr { $e1 - $s1 + 1 } ] \
-                       [ expr { $e2 - $s2 + 1 } ] ]
+                       [ expr { $e($id1) - $s($id1) + 1 } ] \
+                       [ expr { $e($id2) - $s($id2) + 1 } ] ]
     for { set i 0 } { $i < $numlines } { incr i } {
-        set l1 [ expr $s1 + $i ]
-        set l2 [ expr $s2 + $i ]
-        ::Yadt::Find_Ratcliff_Diff2 $pos $l1 $l2 \
-            [ $TEXT_WDG(1) get $l1.0 $l1.end ] \
-            [ $TEXT_WDG(2) get $l2.0 $l2.end ]
+        set l($id1) [ expr $s($id1) + $i ]
+        set l($id2) [ expr $s($id2) + $i ]
+        ::Yadt::Find_Ratcliff_Diff2 $diff_id $l($id1) $l($id2) \
+            [ $TEXT_WDG($id1) get $l($id1).0 $l($id1).end ] \
+            [ $TEXT_WDG($id2) get $l($id2).0 $l($id2).end ]
     }
 }
 
 #===============================================================================
 
-proc ::Yadt::Add_Diff3_Line { diff_id } {
+proc ::Yadt::Align_One_Diff3 { diff_id } {
 
-    variable ::Yadt::DIFF3
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::TEXT_WDG
-    variable ::Yadt::TEXT_NUM_WDG
-    variable ::Yadt::TEXT_INFO_WDG
+
+    ::Yadt::Get_Diff3_Ranges_And_Sizes $diff_id thisdiff s e type size change_text
+
+    set scr_start [ expr $s(1) + $DIFF_INT(delta,1) ]
+
+    set scr_diff_size [ ::Yadt::Align_Diff3_Strings $diff_id s e type size change_text ]
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        foreach [ list thisdiff($i) s($i) e($i) type($i) ] \
-            $DIFF_INT($diff_id,$i,pdiff) { }
-        set size($i) [ expr { $e($i) - $s($i) } ]
-
-        incr s($i) $DIFF_INT(delta,$i)
-
-        switch -- $type($i) {
-            "a" {
-                incr s($i)
-                incr e($i)
-            }
-            "c" {
-                incr size($i)
-            }
-        }
-    }
-
-    if { $DIFF3($diff_id,which_file) == 0 } {
-        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-            set change_text($i) "?"
-        }
-    } else {
-        switch -- $type(1)$type(2)$type(3) {
-            "ccc" {
-                for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-                    set change_text($i) "!"
-                }
-            }
-            "cca" {
-                set change_text(1) "-"
-                set change_text(2) "-"
-                set change_text(3) " "
-            }
-            "cac" {
-                set change_text(1) "-"
-                set change_text(2) " "
-                set change_text(3) "-"
-            }
-            "acc" {
-                set change_text(1) " "
-                set change_text(2) "+"
-                set change_text(3) "+"
-            }
-            "caa" {
-                set change_text(1) "-"
-                set change_text(2) " "
-                set change_text(3) " "
-            }
-            "aca" {
-                set change_text(1) " "
-                set change_text(2) "+"
-                set change_text(3) " "
-            }
-            "aac" {
-                set change_text(1) " "
-                set change_text(2) " "
-                set change_text(3) "+"
-            }
-            "aaa" -
-            default {
-                return -code error "Incorrect data <$type(1)$type(2)$type(3)> from diff3 in [ lindex [ info level 0 ] 0 ]"
-            }
-        }
-    }
-
-    set max_num [ ::CmnTools::MaxN $size(1) $size(2) $size(3) ]
-
-    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        set count($i) [ expr { $max_num - $size($i) } ]
-    }
-
-    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-
-        set line($i) [ expr $s($i) + $size($i) ]
-
-        for { set j 0 } { $j < $count($i) } { incr j } {
-            $TEXT_WDG($i) insert $line($i).0 "\n"
-            $TEXT_INFO_WDG($i) insert $line($i).0 "\n"
-            $TEXT_NUM_WDG($i) insert $line($i).0 "\n"
-        }
-
-        incr DIFF_INT(delta,$i) $count($i)
-
-        set start $s($i)
-        set end [ expr { $start + $count($i) + $size($i) - 1 } ]
-
-        for { set j $start } { $j <= $end } { incr j } {
-            $TEXT_INFO_WDG($i) insert $j.0 $change_text($i)
-        }
-
-        set DIFF_INT($diff_id,$i,scrdiff) \
-            [ list $thisdiff($i) $start $end $type($i) ]
-
         set DIFF_INT(scrinline,$diff_id,$i) 0
     }
 
-    # AVS: actually, we can even compute inline differences not for all 3 files,
-    # but for any two of them with a simple modification of ::Yadt::Find_Ratcliff_Diff2.
-    #
-    # set max_num [ ::CmnTools::MaxN $size(1) $size(3) ]
-    # for { set i 0 } { $i < $max_num } { incr i } {
-    #     set l1 [ expr $s(1) + $i ]
-    #     set l3 [ expr $s(3) + $i ]
-    #     ::Yadt::Find_Ratcliff_Diff2 1 3 $diff_id $l1 $l3 \
-    #         [ $TEXT_WDG(1) get $l1.0 $l1.end ] \
-    #         [ $TEXT_WDG(3) get $l3.0 $l3.end ]
-    # }
-
-    for { set i 0 } { $i < $max_num } { incr i } {
-        set l1 [ expr $s(1) + $i ]
-        set l2 [ expr $s(2) + $i ]
-        set l3 [ expr $s(3) + $i ]
+    for { set i 0 } { $i < $scr_diff_size } { incr i } {
+        set l1 [ expr $scr_start + $i ]
+        set l2 [ expr $scr_start + $i ]
+        set l3 [ expr $scr_start + $i ]
         ::Yadt::Find_Ratcliff_Diff3 $diff_id $l1 $l2 $l3 \
             [ $TEXT_WDG(1) get $l1.0 $l1.end ] \
             [ $TEXT_WDG(2) get $l2.0 $l2.end ] \
@@ -3607,18 +3695,618 @@ proc ::Yadt::Add_Diff3_Line { diff_id } {
 
 #===============================================================================
 
-proc ::Yadt::Diff2_Size { pos version { screen 0 } } {
+proc ::Yadt::Add_Diff3_Info_Strings {} {
+
+    variable ::Yadt::DIFF3
+
+    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+
+    for { set diff_id 1 } { $diff_id <= $num_diff } { incr diff_id } {
+        ::Yadt::Get_Diff3_Ranges_And_Sizes $diff_id thisdiff s e type size change_text
+        ::Yadt::Add_Info_Strings_In_Range s size change_text
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Add_Info_Strings_In_Range { start diff_size ch_text } {
+
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::TEXT_INFO_WDG
+
+    upvar $start s
+    upvar $diff_size size
+    upvar $ch_text change_text
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        for { set j 0 } { $j < $size($i) } { incr j } {
+            set line($i) [ expr $s($i) + $j ]
+            $TEXT_INFO_WDG($i) insert $line($i).0 $change_text($i)
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Get_Diff3_Ranges_And_Sizes { diff_id diff start end diff_type diff_size change_text } {
+
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::DIFF3
+
+    upvar $diff thisdiff
+    upvar $start s
+    upvar $end e
+    upvar $diff_size size
+    upvar $diff_type type
+    upvar $change_text text
+
+    foreach var [ list thisdiff s e size type text ] {
+        array unset $var
+    }
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        foreach "thisdiff($i) s($i) e($i) type($i)" $DIFF_INT($diff_id,$i,pdiff) { }
+        set size($i) [ expr $e($i) - $s($i) ]
+
+        switch -- $type($i) {
+            "a" {
+                incr s($i)
+            }
+            "c" {
+                incr size($i)
+            }
+        }
+    }
+
+    if { $DIFF3($diff_id,which_file) == 0 } {
+        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+            set text($i) "?"
+        }
+    } else {
+        foreach [ list text(1) text(2) text(3) ] \
+            [ ::Yadt::Get_Diff3_Info_Text $type(1) $type(2) $type(3) ] { }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Get_Border_Ranges { start diff_size shift } {
+
+    upvar $start s
+    upvar $diff_size size
+    upvar $shift full_shift
 
     variable ::Yadt::DIFF_INT
 
-    if { $screen } {
-        set diff scrdiff
-    } else {
-        set diff pdiff
-    }
-    foreach { thisdiff s(1) e(1) s(2) e(2) type } $DIFF_INT($diff,$pos) { }
+    set shifted_size_max [ ::CmnTools::MaxN \
+                               [ expr $size(1) + $full_shift(1) ] \
+                               [ expr $size(2) + $full_shift(2) ] \
+                               [ expr $size(3) + $full_shift(3) ] ]
 
-    switch -- $version {
+    set r_start [ expr $s(1) + $DIFF_INT(delta,1) ]
+    set r_end   [ expr $r_start + $shifted_size_max - 1 ]
+    return [ list $r_start $r_end ]
+}
+
+#===============================================================================
+
+proc ::Yadt::Create_Screen_Ranges { ranges diff_id start end } {
+
+    variable ::Yadt::RANGES
+    variable ::Yadt::RANGES2DIFF
+    variable ::Yadt::DIFF2RANGES
+    variable ::Yadt::DIFF3
+
+    set ranges_ind [ llength [ array names RANGES ] ]
+
+    if { [ llength $ranges ] == 2 && \
+             [ lindex $ranges 0 ] == $start && \
+             [ lindex $ranges 1 ] == $end && \
+             $DIFF3($diff_id,which_file) == 0 } {
+        # Split ranges by 1 line
+        for { set i $start } { $i <= $end } { incr i } {
+            incr ranges_ind
+            set RANGES($ranges_ind) [ list $i $i ]
+            set RANGES2DIFF($ranges_ind) $diff_id
+            lappend DIFF2RANGES($diff_id) $ranges_ind
+        }
+    } else {
+        # Get all ranges inside diff
+        set scr_ranges [ ::YaLcs::Split_Region_By_Ranges $start $end $ranges ]
+        foreach [ list r_start r_end ] $scr_ranges {
+            incr ranges_ind
+            set RANGES($ranges_ind) [ list $r_start $r_end ]
+            set RANGES2DIFF($ranges_ind) $diff_id
+            lappend DIFF2RANGES($diff_id) $ranges_ind
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Get_File_Strings { args } {
+
+     variable ::Yadt::DIFF_FILES
+
+     foreach i $args {
+         set DIFF_FILES(content,$i) [ ::Yadt::Get_File_Content $i -translation [ ::Yadt::Get_Line_End_Translation ] -nonewline ]
+         set DIFF_FILES(strings,$i) [ split $DIFF_FILES(content,$i) "\n" ]
+
+         set DIFF_FILES(test_strings,$i) {}
+         foreach element $DIFF_FILES(strings,$i) {
+             set str ""
+             set list1 [ regexp -all -inline {\S+|\s+} $element ]
+             for { set j 0 } { $j < [ llength $list1 ] } { incr j } {
+                 set el [ string trim [ lindex $list1 $j ] ]
+                 if { $el == "" } continue
+                 append str $el
+                 if { $j < [ expr [ llength $list1 ] - 1 ] } {
+                     append str " "
+                 }
+             }
+             lappend DIFF_FILES(test_strings,$i) $str
+         }
+     }
+}
+
+#===============================================================================
+
+proc ::Yadt::Gather_File_Strings_By_Diff_Id { diff_id file_num } {
+
+    variable ::Yadt::DIFF_FILES
+    variable ::Yadt::DIFF_INT
+
+    foreach [ list thisdiff($file_num) s($file_num) e($file_num) type($file_num) ] \
+        $DIFF_INT($diff_id,$file_num,pdiff) { }
+
+    if { $type($file_num) == "a" } {
+        return [ list {} {} ]
+    }
+
+    set start($file_num) [ expr $s($file_num) - 1 ]
+    set end($file_num)   [ expr $e($file_num) - 1 ]
+
+    return [ list \
+                 [ lrange $DIFF_FILES(strings,$file_num)      $start($file_num) $end($file_num) ] \
+                 [ lrange $DIFF_FILES(test_strings,$file_num) $start($file_num) $end($file_num) ] ]
+}
+
+#===============================================================================
+
+proc ::Yadt::Align_Diff3_Strings { diff_id start end diff_type diff_size ch_text } {
+
+    upvar $start s
+    upvar $end e
+    upvar $diff_size size
+    upvar $diff_type type
+    upvar $ch_text change_text
+
+    if { [ regexp -all -- "a" $type(1)$type(2)$type(3) ] < 2 } {
+        ::Yadt::Prepare_Lcs_Data_For_Diff_id lcsdata $diff_id s
+    }
+
+    switch -- $type(1)$type(2)$type(3) {
+        "aac" {
+            return [ ::Yadt::Align_Two_Third_Empty_Diff3 $diff_id 3 s type size change_text ]
+        }
+        "aca" {
+            return [ ::Yadt::Align_Two_Third_Empty_Diff3 $diff_id 2 s type size change_text ]
+        }
+        "caa" {
+            return [ ::Yadt::Align_Two_Third_Empty_Diff3 $diff_id 1 s type size change_text ]
+        }
+        "acc" {
+            return [ ::Yadt::Align_One_Third_Empty_Diff3 $diff_id 1 lcsdata s type size change_text ]
+        }
+        "cac" {
+            return [ ::Yadt::Align_One_Third_Empty_Diff3 $diff_id 2 lcsdata s type size change_text ]
+        }
+        "cca" {
+            return [ ::Yadt::Align_One_Third_Empty_Diff3 $diff_id 3 lcsdata s type size change_text ]
+        }
+        "ccc" {
+            return [ ::Yadt::Align_Conflict $diff_id lcsdata s type size change_text ]
+        }
+        "aaa" {
+            return -code error "Unexpected diff3 type <$type(1)$type(2)$type(3)>"
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Align_Two_Third_Empty_Diff3 { diff_id id1 start diff_type diff_size ch_text } {
+
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::DIFF_TYPE
+
+    upvar $start s
+    upvar $diff_type type
+    upvar $diff_size size
+    upvar $ch_text change_text
+
+    set ranges {}
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        set full_shift($i) 0
+        set scr_line($i) [ expr $s($i) + $DIFF_INT(delta,$i) ]
+    }
+
+    foreach { id2 id3 } [ ::YaLcs::Get_Other_Ids $id1 ] { }
+
+    set shift($id1) 0
+    set shift($id2) $size($id1)
+    set shift($id3) $size($id1)
+
+    ::Yadt::Move_Lines scr_line shift change_text
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        incr full_shift($i) $shift($i)
+    }
+
+    foreach { r_start r_end } [ ::Yadt::Get_Border_Ranges s size full_shift ] { }
+    lappend ranges $r_start $r_end
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        incr DIFF_INT(delta,$i) $full_shift($i)
+    }
+
+    ::Yadt::Create_Screen_Ranges $ranges $diff_id $r_start $r_end
+    set DIFF_INT($diff_id,scrdiff) [ list $r_start $r_end $type(1)$type(2)$type(3) ]
+
+    return [ expr $r_end - $r_start + 1 ]
+}
+
+#===============================================================================
+
+proc ::Yadt::Align_One_Third_Empty_Diff3 { diff_id id3 lcs start diff_type diff_size ch_text } {
+
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::DIFF_TYPE
+
+    upvar $lcs lcsdata
+    upvar $start s
+    upvar $diff_type type
+    upvar $diff_size size
+    upvar $ch_text change_text
+
+    set ranges {}
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        set full_shift($i) 0
+    }
+
+    foreach { id1 id2 } [ ::YaLcs::Get_Other_Ids $id3 ] { }
+
+    foreach f_line($id1) $lcsdata($id1$id2,$id1) {
+        set idx($id2) [ lsearch $lcsdata($id1$id2,$id1) $f_line($id1) ]
+        set f_line($id2) [ lindex $lcsdata($id1$id2,$id2) $idx($id2) ]
+
+        set scr_line($id1) [ expr $f_line($id1) + $DIFF_INT(delta,$id1) + $full_shift($id1) ]
+        set scr_line($id2) [ expr $f_line($id2) + $DIFF_INT(delta,$id2) + $full_shift($id2) ]
+        set scr_line($id3) 0
+
+        set scr_line_max [ ::CmnTools::MaxN $scr_line($id1) $scr_line($id2) ]
+
+        set shift($id1) [ expr $scr_line_max - $scr_line($id1) ]
+        set shift($id2) [ expr $scr_line_max - $scr_line($id2) ]
+        set shift($id3) 0
+
+        if { $scr_line($id1) == $scr_line($id2) } {
+            if ![ info exists prev_line($id1) ] {
+                set prev_line($id1) $f_line($id1)
+                set prev_scr_line $scr_line($id1)
+            }
+            if ![ info exists prev_line($id2) ] {
+                set prev_line($id2) $f_line($id2)
+            }
+
+            set sh($id1) [ expr $f_line($id1) - $prev_line($id1) - 1 ]
+            set sh($id2) [ expr $f_line($id2) - $prev_line($id2) - 1 ]
+
+            if { $sh($id1) == $sh($id2) && $sh($id1) > 0 } {
+                lappend ranges [ expr $prev_scr_line + 1 ] [ expr $scr_line($id1) - 1 ]
+            }
+
+            set prev_line($id1) $f_line($id1)
+            set prev_line($id2) $f_line($id2)
+            set prev_scr_line $scr_line($id1)
+
+            continue
+        }
+
+        if { $shift($id1) != 0 } {
+            lappend ranges $scr_line($id1) [ expr $scr_line($id1) + $shift($id1) - 1 ]
+        }
+        if { $shift($id2) != 0 } {
+            lappend ranges $scr_line($id2) [ expr $scr_line($id2) + $shift($id2) - 1 ]
+        }
+
+        ::Yadt::Move_Lines scr_line shift change_text
+        incr full_shift($id1) $shift($id1)
+        incr full_shift($id2) $shift($id2)
+    }
+
+    set scr_line($id1) [ expr $s($id1) + $DIFF_INT(delta,$id1) + $size($id1) + $full_shift($id1) ]
+    set scr_line($id2) [ expr $s($id2) + $DIFF_INT(delta,$id2) + $size($id2) + $full_shift($id2) ]
+    set scr_line($id3) [ expr $s($id3) + $DIFF_INT(delta,$id3) ]
+
+    set max_shift [ ::CmnTools::MaxN \
+                        [ expr $size($id1) + $full_shift($id1) ] \
+                        [ expr $size($id2) + $full_shift($id2) ] ]
+
+    set shift($id1) [ expr $max_shift - $size($id1) - $full_shift($id1) ]
+    set shift($id2) [ expr $max_shift - $size($id2) - $full_shift($id2) ]
+    set shift($id3) $max_shift
+
+    ::Yadt::Move_Lines scr_line shift change_text
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        incr full_shift($i) $shift($i)
+    }
+
+    foreach { r_start r_end } [ ::Yadt::Get_Border_Ranges s size full_shift ] { }
+    ::YaLcs::Append_Border_Ranges ranges $r_start $r_end
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        incr DIFF_INT(delta,$i) $full_shift($i)
+    }
+
+    ::Yadt::Create_Screen_Ranges $ranges $diff_id $r_start $r_end
+    set DIFF_INT($diff_id,scrdiff) [ list $r_start $r_end $type(1)$type(2)$type(3) ]
+
+    return [ expr $r_end - $r_start + 1 ]
+}
+
+#===============================================================================
+
+proc ::Yadt::Align_Conflict { diff_id lcs start diff_type diff_size ch_text } {
+
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::DIFF_TYPE
+
+    upvar $lcs lcsdata
+    upvar $start s
+    upvar $diff_type type
+    upvar $diff_size size
+    upvar $ch_text change_text
+
+    set ranges {}
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        set full_shift($i) 0
+    }
+
+    set l_start [ ::CmnTools::MinN $s(1) $s(2) $s(3) ]
+    set size_max [ ::CmnTools::MaxN \
+                       [ expr $s(1) + $size(1) - 1 ] \
+                       [ expr $s(2) + $size(2) - 1 ] \
+                       [ expr $s(3) + $size(3) - 1 ] ]
+
+    for { set line $l_start } { $line <= $size_max } { incr line } {
+
+        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+            set f_line($i) 0
+            set scr_line($i) 0
+            set shift($i) 0
+
+            if ![ info exists prev_line($i) ] {
+                set prev_line($i) $f_line($i)
+            }
+            if ![ info exists prev_scr_line($i) ] {
+                set prev_scr_line($i) $scr_line($i)
+            }
+        }
+
+        if [ ::YaLcs::Find_Lcs_Corresponding_Lines lcsdata f_line $line ] {
+
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                if { $f_line($i) != 0 } {
+                    set scr_line($i) [ expr $f_line($i) + $DIFF_INT(delta,$i) + $full_shift($i) ]
+                }
+            }
+
+            set scr_line_max [ ::CmnTools::MaxN $scr_line(1) $scr_line(2) $scr_line(3) ]
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                if { $scr_line($i) != 0 } {
+                    set shift($i) [ expr $scr_line_max - $scr_line($i) ]
+                }
+            }
+
+            ::Yadt::Move_Lines scr_line shift change_text
+
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                incr full_shift($i) $shift($i)
+            }
+
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                set sh($i) 0
+                if { $prev_line($i) != 0 } {
+                    set sh($i) [ expr $f_line($i) - $prev_line($i) - 1 ]
+                }
+
+                if { $sh($i) > 0 } {
+                    ::YaLcs::Combine_Ranges ranges [ expr $prev_scr_line($i) + 1 ] [ expr $scr_line($i) - 1 ]
+                }
+
+                set prev_line($i) $f_line($i)
+                set prev_scr_line($i) $scr_line($i)
+
+                if { $shift($i) > 0 } {
+                    ::YaLcs::Combine_Ranges ranges $scr_line($i) [ expr $scr_line($i) + $shift($i) - 1 ]
+                }
+            }
+        }
+    }
+
+    set max_args {}
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        set scr_line($i) [ expr $s($i) + $DIFF_INT(delta,$i) + $size($i) + $full_shift($i) ]
+        set shifted_size($i) [ expr $size($i) + $full_shift($i) ]
+        lappend max_args $shifted_size($i)
+    }
+
+    set shifted_size_max [ eval ::CmnTools::MaxN $max_args ]
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        set shift($i) [ expr $shifted_size_max - $shifted_size($i) ]
+        if { $shift($i) > 0 } {
+            ::YaLcs::Combine_Ranges ranges $scr_line($i) [ expr $scr_line($i) + $shift($i) - 1 ]
+        }
+    }
+
+    ::Yadt::Move_Lines scr_line shift change_text
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        incr full_shift($i) $shift($i)
+    }
+
+    foreach { r_start r_end } [ ::Yadt::Get_Border_Ranges s size full_shift ] { }
+    ::YaLcs::Append_Border_Ranges ranges $r_start $r_end
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        incr DIFF_INT(delta,$i) $full_shift($i)
+    }
+
+    ::Yadt::Create_Screen_Ranges $ranges $diff_id $r_start $r_end
+    set DIFF_INT($diff_id,scrdiff) [ list $r_start $r_end $type(1)$type(2)$type(3) ]
+
+    return [ expr $r_end - $r_start + 1 ]
+}
+
+
+#===============================================================================
+
+proc ::Yadt::Prepare_Lcs_Data_For_Diff_id { lcs diff_id shift_up } {
+
+    upvar $lcs lcsdata
+    upvar $shift_up shift
+
+    foreach { lcsdata(12) lcsdata(13) lcsdata(23) } [ ::Yadt::Get_Bs_Lcs_For_Diff_Id $diff_id ] { }
+
+    set lcsdata(12,1) [ ::YaLcs::Convert_Lcs_Data_To_Line_Nums [ lindex $lcsdata(12) 0 ] $shift(1) ]
+    set lcsdata(12,2) [ ::YaLcs::Convert_Lcs_Data_To_Line_Nums [ lindex $lcsdata(12) 1 ] $shift(2) ]
+
+    set lcsdata(13,1) [ ::YaLcs::Convert_Lcs_Data_To_Line_Nums [ lindex $lcsdata(13) 0 ] $shift(1) ]
+    set lcsdata(13,3) [ ::YaLcs::Convert_Lcs_Data_To_Line_Nums [ lindex $lcsdata(13) 1 ] $shift(3) ]
+
+    set lcsdata(23,2) [ ::YaLcs::Convert_Lcs_Data_To_Line_Nums [ lindex $lcsdata(23) 0 ] $shift(2) ]
+    set lcsdata(23,3) [ ::YaLcs::Convert_Lcs_Data_To_Line_Nums [ lindex $lcsdata(23) 1 ] $shift(3) ]
+
+    unset lcsdata(12)
+    unset lcsdata(13)
+    unset lcsdata(23)
+}
+
+#===============================================================================
+
+proc ::Yadt::Move_Lines { lines shift_up ch_text } {
+
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::TEXT_WDG
+    variable ::Yadt::TEXT_INFO_WDG
+    variable ::Yadt::TEXT_NUM_WDG
+
+    upvar $lines ln
+    upvar $shift_up shift
+    upvar $ch_text change_text
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        for { set j 0 } { $j < $shift($i) } { incr j } {
+            set mv_line $ln($i)
+            foreach t_wdg "$TEXT_WDG($i) $TEXT_NUM_WDG($i) $TEXT_INFO_WDG($i)" {
+                $t_wdg insert $mv_line.0 "\n"
+            }
+        }
+    }
+
+    ::Yadt::Add_Info_Strings_In_Range ln shift change_text
+}
+
+#===============================================================================
+
+proc ::Yadt::Append_Final_Lcs_Lines { nums_up } {
+
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::TEXT_WDG
+    variable ::Yadt::TEXT_INFO_WDG
+    variable ::Yadt::TEXT_NUM_WDG
+
+    upvar $nums_up nums
+
+    set test_nums {}
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        lappend test_nums $nums($i)
+    }
+
+    set max_num [ eval ::CmnTools::MaxN $test_nums ]
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        for { set j $nums($i) } { $j < $max_num } { incr j } {
+            foreach t_wdg "$TEXT_WDG($i) $TEXT_NUM_WDG($i) $TEXT_INFO_WDG($i)" {
+                $t_wdg insert [ expr $j + 1 ].0 "\n"
+            }
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Get_Bs_Lcs_For_Diff_Id { diff_id args } {
+
+    variable ::Yadt::DIFF_TYPE
+
+    set ignore_blanks [ ::CmnTools::Get_Arg -ignore_blanks args -default 1 ]
+
+    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+        foreach "str($i) str_bs($i)" [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id $i ] { }
+    }
+
+    if { $ignore_blanks } {
+        set lcsdata(12) [ ::struct::list::LlongestCommonSubsequence2 $str_bs(1) $str_bs(2) 1000 ]
+        set lcsdata(13) [ ::struct::list::LlongestCommonSubsequence2 $str_bs(1) $str_bs(3) 1000 ]
+        set lcsdata(23) [ ::struct::list::LlongestCommonSubsequence2 $str_bs(2) $str_bs(3) 1000 ]
+    } else {
+        set lcsdata(12) [ ::struct::list::LlongestCommonSubsequence2 $str(1) $str(2) 1000 ]
+        set lcsdata(13) [ ::struct::list::LlongestCommonSubsequence2 $str(1) $str(3) 1000 ]
+        set lcsdata(23) [ ::struct::list::LlongestCommonSubsequence2 $str(2) $str(3) 1000 ]
+    }
+
+    return [ list $lcsdata(12) $lcsdata(13) $lcsdata(23) ]
+}
+
+#===============================================================================
+
+proc ::Yadt::Diff_Size { diff_id method } {
+
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::OPTIONS
+
+    switch -- $DIFF_TYPE {
+        2 {
+            return [ ::Yadt::Diff2_Size $diff_id $method ]
+        }
+        3 {
+            switch -- $OPTIONS(merge_mode) {
+                normal {
+                    return [ ::Yadt::Diff3_Size $diff_id $method ]
+                }
+                expert {
+                    return [ ::Yadt::Range3_Size $diff_id $method ]
+                }
+            }
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Diff2_Size { diff_id method } {
+
+    variable ::Yadt::DIFF_INT
+
+    foreach { thisdiff s(1) e(1) s(2) e(2) type } $DIFF_INT($diff_id,pdiff) { }
+
+    switch -- $method {
         -1 {
             set lines 0
         }
@@ -3642,7 +4330,7 @@ proc ::Yadt::Diff2_Size { pos version { screen 0 } } {
             }
         }
         default {
-            return -code error "Internal error: incorrect merge type <$version>\
+            return -code error "Internal error: incorrect merge type <$method>\
                 in [ lindex [ info level 0 ] 0 ]"
         }
     }
@@ -3652,31 +4340,25 @@ proc ::Yadt::Diff2_Size { pos version { screen 0 } } {
 
 #===============================================================================
 
-proc ::Yadt::Diff3_Size { pos version { screen 0 } } {
+proc ::Yadt::Diff3_Size { diff_id method } {
 
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
 
-    if { $screen } {
-        set diff scrdiff
-    } else {
-        set diff pdiff
-    }
-
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
         foreach [ list thisdiff($i) s($i) e($i) type($i) ] \
-            $DIFF_INT($pos,$i,$diff) { }
+            $DIFF_INT($diff_id,$i,pdiff) { }
     }
 
-    switch -- $version {
+    switch -- $method {
         -1 {
             set lines 0
         }
         1 -
         3 -
         2 {
-            set lines [ expr { $e($version) - $s($version) + 1 } ]
-            if { $type($version) == "a" } {
+            set lines [ expr { $e($method) - $s($method) + 1 } ]
+            if { $type($method) == "a" } {
                 incr lines -1
             }
         }
@@ -3726,7 +4408,7 @@ proc ::Yadt::Diff3_Size { pos version { screen 0 } } {
             }
         }
         default {
-            return -code error "Internal error: incorrect merge type <$version>\
+            return -code error "Internal error: incorrect merge type <$method>\
                 in [ lindex [ info level 0 ] 0 ]"
         }
     }
@@ -3736,14 +4418,66 @@ proc ::Yadt::Diff3_Size { pos version { screen 0 } } {
 
 #===============================================================================
 
-proc ::Yadt::Merge2 { new_method } {
+proc ::Yadt::Range3_Size { diff_id method } {
+
+    variable ::Yadt::RANGES
+    variable ::Yadt::TEXT_NUM_WDG
+
+    foreach { start end type } $RANGES($diff_id) { }
+
+    set lines 0
+
+    if { $method == -1 } {
+        return $lines
+    }
+
+    foreach m [ split $method "" ] {
+        incr lines [ ::Yadt::One_Range3_Size $start $end $m ]
+    }
+
+    return $lines
+}
+
+#===============================================================================
+
+proc ::Yadt::One_Range3_Size { start end method } {
+
+    variable ::Yadt::TEXT_NUM_WDG
+
+    set lines 0
+
+    switch -- $method {
+        1 -
+        2 -
+        3 {
+            for { set i $start } { $i <= $end } { incr i } {
+                set num_text [ $TEXT_NUM_WDG($method) get $i.0 $i.end ]
+                if { $num_text == "" } continue
+                incr lines
+            }
+        }
+        default {
+            return -code error "Internal error: incorrect merge type <$method>\
+                in [ lindex [ info level 0 ] 0 ]"
+        }
+    }
+
+    return $lines
+}
+
+#===============================================================================
+
+proc ::Yadt::Merge2 { new_method args } {
 
     variable ::Yadt::OPTIONS
     variable ::Yadt::DIFF_INT
 
-    ::Yadt::Merge2_By_Method $DIFF_INT(pos) $DIFF_INT(merge$DIFF_INT(pos)) $new_method
+    set pos  [ ::CmnTools::Get_Arg -pos  args -default $DIFF_INT(pos) ]
+    set mark [ ::CmnTools::Get_Arg -mark args -default 1 ]
 
-    set DIFF_INT(merge$DIFF_INT(pos)) $new_method
+    ::Yadt::Merge2_By_Method $new_method -pos $pos -mark $mark
+    set DIFF_INT(normal_merge$pos) $new_method
+
     if { $OPTIONS(autocenter) } {
         ::Yadt::Merge_Center
     }
@@ -3751,7 +4485,7 @@ proc ::Yadt::Merge2 { new_method } {
 
 #===============================================================================
 
-proc ::Yadt::Merge2_By_Method { pos oldmethod new_method { mark 1 } } {
+proc ::Yadt::Merge2_By_Method { new_method args } {
 
     variable ::Yadt::DIFF_INT
     variable ::Yadt::MERGE_TEXT_WDG
@@ -3759,17 +4493,22 @@ proc ::Yadt::Merge2_By_Method { pos oldmethod new_method { mark 1 } } {
     variable ::Yadt::TEXT_WDG
     variable ::Yadt::DIFF_TYPE
 
-    ::Yadt::Enable_Merge_Info_Wdg
+    set diff_id [ ::CmnTools::Get_Arg -pos args -default $DIFF_INT(pos) ]
+    set mark [ ::CmnTools::Get_Arg -mark args -default 1 ]
+
+    set oldmethod $DIFF_INT(normal_merge$diff_id)
 
     if { $oldmethod != -1 } {
         set oldlines 0
         foreach i [ split $oldmethod {} ] {
-            incr oldlines [ ::Yadt::Diff2_Size $pos $i ]
+            incr oldlines [ ::Yadt::Diff_Size $diff_id $i ]
         }
 
         if { $oldlines > 0 } {
-            $MERGE_INFO_WDG(2) delete mark$pos "mark${pos}+${oldlines}lines"
-            $MERGE_TEXT_WDG(2) delete mark$pos "mark${pos}+${oldlines}lines"
+            ::Yadt::Enable_Merge_Info_Wdg
+            $MERGE_INFO_WDG(2) delete mark${diff_id} "mark${diff_id}+${oldlines}lines"
+            ::Yadt::Disable_Merge_Info_Wdg
+            $MERGE_TEXT_WDG(2) delete mark${diff_id} "mark${diff_id}+${oldlines}lines"
             update
         }
     }
@@ -3779,7 +4518,7 @@ proc ::Yadt::Merge2_By_Method { pos oldmethod new_method { mark 1 } } {
         return
     }
 
-    foreach { thisdiff s(1) e(1) s(2) e(2) type } $DIFF_INT(scrdiff,$pos) { }
+    foreach { start end type } $DIFF_INT($diff_id,scrdiff) { }
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
         set new_lines($i) 0
@@ -3789,8 +4528,8 @@ proc ::Yadt::Merge2_By_Method { pos oldmethod new_method { mark 1 } } {
     set newtext ""
 
     foreach i [ split $new_method {} ] {
-        set new_lines($i) [ ::Yadt::Diff2_Size $pos $i ]
-        set addtext  [ $TEXT_WDG($i) get $s($i).0 $s($i).0+$new_lines($i)lines ]
+        set new_lines($i) [ ::Yadt::Diff_Size $diff_id $i ]
+        set addtext  [ $TEXT_WDG($i) get $start.0 $start.0+$new_lines($i)lines ]
 
         incr newlines $new_lines($i)
 
@@ -3807,30 +4546,44 @@ proc ::Yadt::Merge2_By_Method { pos oldmethod new_method { mark 1 } } {
         append info_lines " \n"
     }
 
-    $MERGE_TEXT_WDG(2) insert mark$pos $newtext diff
-    $MERGE_INFO_WDG(2) insert mark$pos $info_lines diff
+    $MERGE_TEXT_WDG(2) insert mark${diff_id} $newtext diff
+    ::Yadt::Enable_Merge_Info_Wdg
+    $MERGE_INFO_WDG(2) insert mark${diff_id} $info_lines diff
+    ::Yadt::Disable_Merge_Info_Wdg
     update
 
     # Coloring merge preview
-    ::Yadt::Color_Merge_Tag 2 $pos $new_method $new_lines(1) $new_lines(2) 0
+    ::Yadt::Color_Merge_Tag $diff_id 2 $new_method $new_lines(1) $new_lines(2) 0
 
-    if { $pos == $DIFF_INT(pos) && $mark } {
+    if { $mark } {
+        ::Yadt::Enable_Merge_Info_Wdg
         $MERGE_INFO_WDG(2) tag add \
-            currtag mark$pos "mark${pos}+${newlines}lines"
+            currtag mark${diff_id} "mark${diff_id}+${newlines}lines"
+        ::Yadt::Disable_Merge_Info_Wdg
     }
-    ::Yadt::Disable_Merge_Info_Wdg
 }
 
 #===============================================================================
 
-proc ::Yadt::Merge3 { target new_method } {
+proc ::Yadt::Merge3 { target new_method args } {
 
     variable ::Yadt::OPTIONS
     variable ::Yadt::DIFF_INT
 
-    ::Yadt::Merge3_By_Method $target $DIFF_INT(pos) $DIFF_INT(merge$DIFF_INT(pos),$target) $new_method
+    set pos  [ ::CmnTools::Get_Arg -pos  args -default $DIFF_INT(pos) ]
+    set mark [ ::CmnTools::Get_Arg -mark args -default 1 ]
 
-    set DIFF_INT(merge$DIFF_INT(pos),$target) $new_method
+    switch -- $OPTIONS(merge_mode) {
+        normal {
+            ::Yadt::Merge_Diff3_By_Method $target $new_method -pos $pos -mark $mark
+            set DIFF_INT($OPTIONS(merge_mode)_merge$pos,$target) $new_method
+        }
+        expert {
+            ::Yadt::Merge_Range3_By_Method $target $new_method -pos $pos -mark $mark
+            set DIFF_INT($OPTIONS(merge_mode)_merge$pos,$target) $new_method
+        }
+    }
+
     if { $OPTIONS(autocenter) } {
         ::Yadt::Merge_Center
     }
@@ -3838,29 +4591,30 @@ proc ::Yadt::Merge3 { target new_method } {
 
 #===============================================================================
 
-proc ::Yadt::Merge3_By_Method { target pos oldmethod new_method { mark 1 } } {
+proc ::Yadt::Merge_Diff3_By_Method { target new_method args } {
 
     variable ::Yadt::DIFF_INT
     variable ::Yadt::MERGE_TEXT_WDG
     variable ::Yadt::MERGE_INFO_WDG
     variable ::Yadt::TEXT_WDG
+    variable ::Yadt::TEXT_NUM_WDG
     variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::OPTIONS
+
+    set diff_id [ ::CmnTools::Get_Arg -pos  args -default $DIFF_INT(pos) ]
+    set mark [ ::CmnTools::Get_Arg -mark args -default 1 ]
 
     ::Yadt::Enable_Merge_Info_Wdg
 
     # Delete lines for oldmethod if any
-    if { $oldmethod != -1 } {
-        set oldlines 0
-        foreach i [ split $oldmethod {} ] {
-            incr oldlines [ ::Yadt::Diff3_Size $pos $i ]
-        }
+    set oldmethod $DIFF_INT($OPTIONS(merge_mode)_merge$diff_id,$target)
+    set oldlines [ ::Yadt::Diff_Size $diff_id $oldmethod ]
 
-        if { $oldlines > 0 } {
-            $MERGE_INFO_WDG($target) delete mark${target}_${DIFF_INT(pos)} \
-                "mark${target}_${DIFF_INT(pos)}+${oldlines}lines"
-            $MERGE_TEXT_WDG($target) delete mark${target}_${DIFF_INT(pos)} \
-                "mark${target}_${DIFF_INT(pos)}+${oldlines}lines"
-        }
+    if { $oldlines > 0 } {
+        $MERGE_INFO_WDG($target) delete mark${target}_${DIFF_INT(pos)} \
+            "mark${target}_${DIFF_INT(pos)}+${oldlines}lines"
+        $MERGE_TEXT_WDG($target) delete mark${target}_${DIFF_INT(pos)} \
+            "mark${target}_${DIFF_INT(pos)}+${oldlines}lines"
     }
 
     if { $new_method == -1 } {
@@ -3868,10 +4622,8 @@ proc ::Yadt::Merge3_By_Method { target pos oldmethod new_method { mark 1 } } {
         return
     }
 
-    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        foreach [ list thisdiff($i) s($i) e($i) type($i) ] \
-            $DIFF_INT($pos,$i,scrdiff) { }
-    }
+    foreach { start end type } [ ::Yadt::Get_Diff_Scr_Params $diff_id ] { }
+    if { $start == -1 && $end == -1 && $type == -1 } return
 
     # Add lines for new method
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
@@ -3882,8 +4634,14 @@ proc ::Yadt::Merge3_By_Method { target pos oldmethod new_method { mark 1 } } {
     set newtext ""
 
     foreach i [ split $new_method {} ] {
-        set new_lines($i) [ ::Yadt::Diff3_Size $pos $i ]
-        set addtext  [ $TEXT_WDG($i) get $s($i).0 $s($i).0+$new_lines($i)lines ]
+        set new_lines($i) [ ::Yadt::Diff_Size $diff_id $i ]
+
+        set addtext ""
+        for { set j $start } { $j <= $end } { incr j } {
+            set num_txt [ $TEXT_NUM_WDG($i) get $j.0 $j.end ]
+            if { $num_txt == "" } continue
+            append addtext [ $TEXT_WDG($i) get $j.0 $j.0+1lines ]
+        }
 
         incr newlines $new_lines($i)
 
@@ -3895,6 +4653,7 @@ proc ::Yadt::Merge3_By_Method { target pos oldmethod new_method { mark 1 } } {
     }
 
     set info_lines {}
+
     for { set i 1 } { $i <= $newlines } { incr i } {
         append info_lines " \n"
     }
@@ -3905,9 +4664,9 @@ proc ::Yadt::Merge3_By_Method { target pos oldmethod new_method { mark 1 } } {
     update
 
     # Coloring merge preview
-    ::Yadt::Color_Merge_Tag $target $pos $new_method $new_lines(1) $new_lines(2) $new_lines(3)
+    ::Yadt::Color_Merge_Tag $diff_id $target $new_method $new_lines(1) $new_lines(2) $new_lines(3)
 
-    if { $pos == $DIFF_INT(pos) && $mark } {
+    if { $mark } {
         $MERGE_INFO_WDG($target) tag add \
             currtag mark${target}_${DIFF_INT(pos)} \
             "mark${target}_${DIFF_INT(pos)}+${newlines}lines"
@@ -3917,9 +4676,137 @@ proc ::Yadt::Merge3_By_Method { target pos oldmethod new_method { mark 1 } } {
 
 #===============================================================================
 
-proc ::Yadt::Color_Merge_Tag { target pos method lines1 lines2 lines3 } {
+proc ::Yadt::Merge_Range3_By_Method { target new_method args } {
 
     variable ::Yadt::DIFF_INT
+    variable ::Yadt::MERGE_TEXT_WDG
+    variable ::Yadt::MERGE_INFO_WDG
+    variable ::Yadt::TEXT_WDG
+    variable ::Yadt::TEXT_NUM_WDG
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
+    variable ::Yadt::RANGES2DIFF
+    variable ::Yadt::DIFF2RANGES
+
+    set diff_id [ ::CmnTools::Get_Arg -pos  args -default $DIFF_INT(pos) ]
+    set mark [ ::CmnTools::Get_Arg -mark args -default 1 ]
+
+    ::Yadt::Enable_Merge_Info_Wdg
+
+    # Clean lines at first if we have to
+    set oldlines 0
+    foreach range $DIFF2RANGES($RANGES2DIFF($diff_id)) {
+        set method $DIFF_INT(expert_merge$range,$target)
+        if { $method != -1 } {
+            foreach i [ split $method {} ] {
+                incr oldlines [ ::Yadt::Diff_Size $range $i ]
+            }
+        }
+    }
+
+    if { $oldlines > 0 } {
+        $MERGE_INFO_WDG($target) delete mark${target}_$RANGES2DIFF($diff_id) \
+            "mark${target}_$RANGES2DIFF($diff_id)+${oldlines}lines"
+
+        $MERGE_TEXT_WDG($target) delete mark${target}_$RANGES2DIFF($diff_id) \
+            "mark${target}_$RANGES2DIFF($diff_id)+${oldlines}lines"
+    }
+
+    set newlines 0
+    set newtext ""
+
+    foreach { start end type } [ ::Yadt::Get_Diff_Scr_Params $diff_id ] { }
+    if { $start == -1 && $end == -1 && $type == -1 } return
+
+    foreach range $DIFF2RANGES($RANGES2DIFF($diff_id)) {
+        foreach { r_start r_end r_type } $RANGES($range) { }
+
+        set method $DIFF_INT(expert_merge$range,$target)
+        if { $r_start == $start && $r_end == $end } {
+            set method $new_method
+        }
+
+        if { $method == -1 } continue
+
+        foreach i [ split $method {} ] {
+
+            incr newlines [ ::Yadt::Diff_Size $range $i ]
+
+            set addtext ""
+            for { set j $r_start } { $j <= $r_end } { incr j } {
+                set num_txt [ $TEXT_NUM_WDG($i) get $j.0 $j.end ]
+                if { $num_txt == "" } continue
+                append addtext [ $TEXT_WDG($i) get $j.0 $j.0+1lines ]
+            }
+
+            if { $newtext == "" } {
+                set newtext $addtext
+            } else {
+                append newtext $addtext
+            }
+        }
+    }
+
+    set info_lines {}
+    for { set i 1 } { $i <= $newlines } { incr i } {
+        append info_lines " \n"
+    }
+
+    # Actually inserting newtext in merge widget
+    $MERGE_TEXT_WDG($target) insert mark${target}_$RANGES2DIFF($diff_id) $newtext diff
+    $MERGE_INFO_WDG($target) insert mark${target}_$RANGES2DIFF($diff_id) $info_lines diff
+    update
+
+    # Coloring merge preview
+    ::Yadt::Color_Range_Tags_Inside_Diff $target $diff_id $new_method
+
+    if { $mark } {
+        set range_size [ ::Yadt::Diff_Size $diff_id $new_method ]
+        set offset [ ::Yadt::Get_Range_Offset_Inside_Diff $diff_id $target ]
+
+        set m_start "mark${target}_$RANGES2DIFF($diff_id)+${offset}lines"
+        set m_end "mark${target}_$RANGES2DIFF($diff_id)+${offset}lines+${range_size}lines"
+
+        $MERGE_INFO_WDG($target) tag add currtag $m_start $m_end
+        if { $OPTIONS(merge_mode) == "expert" } {
+            $MERGE_INFO_WDG($target) tag add textcurrtag $m_start $m_end
+            $MERGE_TEXT_WDG($target) tag add textcurrtag $m_start $m_end
+        }
+    }
+    ::Yadt::Disable_Merge_Info_Wdg
+}
+
+#===============================================================================
+
+proc ::Yadt::Get_Diff_Scr_Params { diff_id } {
+
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::RANGES
+
+    set start -1
+    set end -1
+    set type -1
+
+    if { $DIFF_TYPE == 3 && $OPTIONS(merge_mode) == "expert" } {
+        if [ info exists RANGES($diff_id) ] {
+            foreach [ list start end type ] $RANGES($diff_id) { }
+        }
+    } else {
+        if [ info exists DIFF_INT($diff_id,scrdiff) ] {
+            foreach [ list start end type ] $DIFF_INT($diff_id,scrdiff) { }
+        }
+    }
+
+    return [ list $start $end $type ]
+}
+
+#===============================================================================
+
+proc ::Yadt::Color_Merge_Tag { diff_id target method lines1 lines2 lines3 } {
+
     variable ::Yadt::MERGE_TEXT_WDG
     variable ::Yadt::TEXT_WDG
     variable ::Yadt::DIFF_TYPE
@@ -3934,10 +4821,10 @@ proc ::Yadt::Color_Merge_Tag { target pos method lines1 lines2 lines3 } {
 
         switch -- $DIFF_TYPE {
             2 {
-                set start [ $MERGE_TEXT_WDG($target) dump -mark mark${DIFF_INT(pos)} ]
+                set start [ $MERGE_TEXT_WDG($target) dump -mark mark${diff_id} ]
             }
             3 {
-                set start [ $MERGE_TEXT_WDG($target) dump -mark mark${target}_${DIFF_INT(pos)} ]
+                set start [ $MERGE_TEXT_WDG($target) dump -mark mark${target}_$diff_id ]
             }
         }
 
@@ -3954,6 +4841,51 @@ proc ::Yadt::Color_Merge_Tag { target pos method lines1 lines2 lines3 } {
     }
 }
 
+#===============================================================================
+
+proc ::Yadt::Color_Range_Tags_Inside_Diff { target range new_method } {
+
+    variable ::Yadt::RANGES2DIFF
+    variable ::Yadt::DIFF2RANGES
+    variable ::Yadt::RANGES
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::MERGE_START
+    variable ::Yadt::MERGE_TEXT_WDG
+
+    foreach { start end type } [ ::Yadt::Get_Diff_Scr_Params $range ] { }
+
+    set diff_id $RANGES2DIFF($range)
+
+    for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
+        set offset($j) 0
+    }
+
+    foreach r $DIFF2RANGES($diff_id) {
+        array unset lines
+
+        foreach { r_start r_end r_type } $RANGES($r) { }
+
+        set method $DIFF_INT(expert_merge$r,$target)
+        if { $r_start == $start && $r_end == $end } {
+            set method $new_method
+        }
+        if { $method == -1 } continue
+
+        foreach i [ split $method {} ] {
+
+            set lines($i) [ ::Yadt::Diff_Size $r $i ]
+
+            set m_start "mark${target}_$diff_id+$offset($target)lines"
+            set m_end "mark${target}_$diff_id+$offset($target)lines+$lines($i)lines"
+
+            $MERGE_TEXT_WDG($target) tag add merge${i}tag $m_start $m_end
+            update
+            incr offset($target) $lines($i)
+        }
+    }
+}
+    
 #===============================================================================
 
 proc ::Yadt::Merge_All { target new_method } {
@@ -3987,15 +4919,11 @@ proc ::Yadt::Merge2_All { new_method } {
 
     set num_diff [ llength $DIFF2(diff) ]
 
-    set current_pos $DIFF_INT(pos)
-
     for { set i 1 } { $i <= $num_diff } { incr i } {
-        set DIFF_INT(pos) $i
-        ::Yadt::Merge2_By_Method $DIFF_INT(pos) $DIFF_INT(merge$DIFF_INT(pos)) $new_method 0
-        set DIFF_INT(merge$DIFF_INT(pos)) $new_method
+        ::Yadt::Merge2 $new_method -pos $i -mark 0
+        set DIFF_INT(normal_merge$i) $new_method
     }
 
-    set DIFF_INT(pos) $current_pos
     ::Yadt::Set_Diff_Indicator $DIFF_INT(pos) 0 1
 }
 
@@ -4005,19 +4933,24 @@ proc ::Yadt::Merge3_All { target new_method } {
 
     variable ::Yadt::DIFF3
     variable ::Yadt::DIFF_INT
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
 
-    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
-
-    set current_pos $DIFF_INT(pos)
-
-    for { set i 1 } { $i <= $num_diff } { incr i } {
-        set DIFF_INT(pos) $i
-        ::Yadt::Merge3_By_Method $target $DIFF_INT(pos) $DIFF_INT(merge$DIFF_INT(pos),$target) $new_method 0
-        set DIFF_INT(merge$DIFF_INT(pos),$target) $new_method
-        set DIFF_INT($DIFF_INT(pos),$target,resolved) 1
+    switch -- $OPTIONS(merge_mode) {
+        normal {
+            set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+        }
+        expert {
+            set num_diff [ llength [ array names RANGES ] ]
+        }
     }
 
-    set DIFF_INT(pos) $current_pos
+    for { set i 1 } { $i <= $num_diff } { incr i } {
+        ::Yadt::Merge3 $target $new_method -pos $i -mark 0
+        set DIFF_INT($OPTIONS(merge_mode)_merge$i,$target) $new_method
+        set DIFF_INT($i,$target,$OPTIONS(merge_mode)_resolved) 1
+    }
+
     ::Yadt::Set_Diff_Indicator $DIFF_INT(pos) 0 1
 }
 
@@ -4067,14 +5000,13 @@ proc ::Yadt::Save_Current_Merges2 {} {
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::MERGE_START
-    variable ::Yadt::OPTIONS
 
     array unset current_merges
 
     set num_diff [ llength $DIFF2(diff) ]
 
     for { set i 1 } { $i <= $num_diff } { incr i } {
-        set current_merges(merge$i) $DIFF_INT(merge$i)
+        set current_merges(merge$i) $DIFF_INT(normal_merge$i)
     }
 
     return [ array get current_merges ]
@@ -4089,88 +5021,27 @@ proc ::Yadt::Save_Current_Merges3 {} {
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::MERGE_START
     variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
 
     array unset current_merges
 
-    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+    switch -- $OPTIONS(merge_mode) {
+        normal {
+            set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+        }
+        expert {
+            set num_diff [ llength [ array names RANGES ] ]
+        }
+    }
 
     for { set i 1 } { $i <= $num_diff } { incr i } {
 
         for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-            set current_merges(merge$i,$j) $DIFF_INT(merge$i,$j)
-            set current_merges($i,$j,resolved) $DIFF_INT($i,$j,resolved)
+            set current_merges(merge$i,$j) $DIFF_INT(normal_merge$i,$j)
         }
     }
 
     return [ array get current_merges ]
-}
-
-#===============================================================================
-
-proc ::Yadt::Apply_Merges { merges_list pos } {
-
-    variable ::Yadt::DIFF_TYPE
-
-    switch -- $DIFF_TYPE {
-        2 {
-            ::Yadt::Apply_Merges2 $merges_list $pos
-        }
-        3 {
-            ::Yadt::Apply_Merges3 $merges_list $pos
-        }
-    }
-}
-
-#===============================================================================
-
-proc ::Yadt::Apply_Merges2 { merges_list pos } {
-
-    variable ::Yadt::DIFF2
-    variable ::Yadt::DIFF_INT
-    variable ::Yadt::DIFF_TYPE
-    variable ::Yadt::MERGE_START
-    variable ::Yadt::OPTIONS
-
-    array set merges $merges_list
-
-    set num_diff [ llength $DIFF2(diff) ]
-
-    for { set i 1 } { $i <= $num_diff } { incr i } {
-        set DIFF_INT(pos) $i
-        ::Yadt::Merge2_By_Method $DIFF_INT(pos) $DIFF_INT(merge$DIFF_INT(pos)) $merges(merge$i) 0
-        set DIFF_INT(merge$DIFF_INT(pos)) $merges(merge$i)
-    }
-
-    set DIFF_INT(pos) $pos
-    ::Yadt::Set_Diff_Indicator $DIFF_INT(pos) 0 1
-}
-
-#===============================================================================
-
-proc ::Yadt::Apply_Merges3 { merges_list pos } {
-
-    variable ::Yadt::DIFF3
-    variable ::Yadt::DIFF_INT
-    variable ::Yadt::DIFF_TYPE
-    variable ::Yadt::MERGE_START
-    variable ::Yadt::OPTIONS
-
-    array set merges $merges_list
-
-    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
-
-    for { set i 1 } { $i <= $num_diff } { incr i } {
-
-        for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-            set DIFF_INT(pos) $i
-            ::Yadt::Merge3_By_Method $j $DIFF_INT(pos) $DIFF_INT(merge$DIFF_INT(pos),$j) $merges(merge$i,$j) 0
-            set DIFF_INT(merge$DIFF_INT(pos),$j) $merges(merge$i,$j)
-            set DIFF_INT($DIFF_INT(pos),$j,resolved) $merges($i,$j,resolved)
-        }
-    }
-
-    set DIFF_INT(pos) $pos
-    ::Yadt::Set_Diff_Indicator $DIFF_INT(pos) 0 1
 }
 
 #===============================================================================
@@ -4233,12 +5104,20 @@ proc ::Yadt::Diffs_As_Resolved { target action { type -all } } {
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::MERGE_START
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
+    variable ::Yadt::RANGES2DIFF
 
-    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
-
-    if { $num_diff == 0 } {
-        return
+    switch -- $OPTIONS(merge_mode) {
+        normal {
+            set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+        }
+        expert {
+            set num_diff [ llength [ array names RANGES ] ]
+        }
     }
+
+    if { $num_diff == 0 } return
 
     switch -- $action {
         -mark {
@@ -4256,16 +5135,18 @@ proc ::Yadt::Diffs_As_Resolved { target action { type -all } } {
 
         switch -- $type {
             -conflict {
-                if { $DIFF3($i,which_file) != 0 } {
-                    continue
+                set diff_id $i
+                if { $OPTIONS(merge_mode) == "expert" } {
+                    set diff_id $RANGES2DIFF($diff_id)
                 }
+                if { $DIFF3($diff_id,which_file) != 0 } continue
             }
             -all -
             default {
             }
         }
         foreach j [ split $target {} ] {
-            set DIFF_INT($i,$j,resolved) $resolve_value
+            set DIFF_INT($i,$j,$OPTIONS(merge_mode)_resolved) $resolve_value
         }
     }
     ::Yadt::Update_Widgets
@@ -4273,14 +5154,19 @@ proc ::Yadt::Diffs_As_Resolved { target action { type -all } } {
 
 #===============================================================================
 
-proc ::Yadt::Resolve_Diff { pos } {
+proc ::Yadt::Resolve_Diff { diff_id } {
 
     variable ::Yadt::DIFF3
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::MERGE_START
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES2DIFF
 
-    set DIFF_INT(pos) $pos
+    set pos $diff_id
+    if { $OPTIONS(merge_mode) == "expert" } {
+        set pos $RANGES2DIFF($diff_id)
+    }
 
     switch -- $DIFF3($pos,which_file) {
         0 {
@@ -4310,14 +5196,14 @@ proc ::Yadt::Resolve_Diff { pos } {
             set status 1
         }
         default {
-            return -code error "Internal error: Invalid DIFF3 format found: <$DIFF3($pos,which_file)>"
+            return -code error "Internal error: Invalid DIFF3 format found: <$DIFF3($diff_id,which_file)>"
         }
     }
 
     for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-        ::Yadt::Merge3_By_Method $j $DIFF_INT(pos) $DIFF_INT(merge$DIFF_INT(pos),$j) $resolve($j) 0
-        set DIFF_INT(merge$DIFF_INT(pos),$j) $resolve($j)
-        set DIFF_INT($DIFF_INT(pos),$j,resolved) $status
+        ::Yadt::Merge3 $j $resolve($j) -pos $pos -mark 0
+        set DIFF_INT($OPTIONS(merge_mode)_merge$diff_id,$j) $resolve($j)
+        set DIFF_INT($diff_id,$j,$OPTIONS(merge_mode)_resolved) $status
     }
 
     return $status
@@ -4331,6 +5217,9 @@ proc ::Yadt::Check_Resolved { type { target all } { check_confl_exist "" } { num
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::MERGE_START
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
+    variable ::Yadt::RANGES2DIFF
 
     if { $check_confl_exist != "" } {
         upvar $check_confl_exist confl_exist
@@ -4344,7 +5233,14 @@ proc ::Yadt::Check_Resolved { type { target all } { check_confl_exist "" } { num
     }
 
     if { $num_diff == -1 } {
-        set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+        switch -- $OPTIONS(merge_mode) {
+            normal {
+                set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+            }
+            expert {
+                set num_diff [ llength [ array names RANGES ] ]
+            }
+        }
     }
 
     if { $num_diff == 0 } {
@@ -4352,25 +5248,31 @@ proc ::Yadt::Check_Resolved { type { target all } { check_confl_exist "" } { num
     }
 
     for { set i 1 } { $i <= $num_diff } { incr i } {
+
+        set diff_id $i
+        if { $OPTIONS(merge_mode) == "expert" } {
+            set diff_id $RANGES2DIFF($diff_id)
+        }
+
         if { $target == "all" } {
             for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-                if { $type == "-confl" && $DIFF3($i,which_file) != 0 } {
+                if { $type == "-confl" && $DIFF3($diff_id,which_file) != 0 } {
                     continue
                 } else {
                     set confl_exist 1
                 }
-                if { !$DIFF_INT($i,$j,resolved) } {
+                if { !$DIFF_INT($i,$j,$OPTIONS(merge_mode)_resolved) } {
                     set resolved 0
                     break
                 }
             }
         } else {
-            if { $type == "-confl" && $DIFF3($i,which_file) != 0 } {
+            if { $type == "-confl" && $DIFF3($diff_id,which_file) != 0 } {
                 continue
             } else {
                 set confl_exist 1
             }
-            if { !$DIFF_INT($i,$target,resolved) } {
+            if { !$DIFF_INT($i,$target,$OPTIONS(merge_mode)_resolved) } {
                 set resolved 0
                 break
             }
@@ -4434,10 +5336,20 @@ proc ::Yadt::Auto_Merge3 {} {
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::MERGE_START
     variable ::Yadt::WIDGETS
+    variable ::Yadt::RANGES
 
     if { $DIFF_TYPE != 3 } return
 
-    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+    switch -- $OPTIONS(merge_mode) {
+        normal {
+            set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+            set units "Differences"
+        }
+        expert {
+            set num_diff [ llength [ array names RANGES ] ]
+            set units "Ranges"
+        }
+    }
 
     if { $num_diff == 0 } return
 
@@ -4469,8 +5381,8 @@ proc ::Yadt::Auto_Merge3 {} {
     }
 
     set msg "\tAuto merge finished:\n\n\
-                  $num_diff\tTotal Number of Differences\n\n\
-                  $num_resolved\tDifferences Resolved\n\
+                  $num_diff\tTotal Number of $units\n\n\
+                  $num_resolved\t$units Resolved\n\
                   $num_conflicts\tConflicts Found"
 
     if { !$OPTIONS(preview_shown) } {
@@ -4481,7 +5393,8 @@ proc ::Yadt::Auto_Merge3 {} {
         -title "Auto merge result" \
         -icon info \
         -type ok \
-        -message $msg
+        -message $msg \
+        -parent $WIDGETS(window_name)
 
     ::Yadt::Restore_Cursor [ concat $WIDGETS(window_name) $wdgs ]
 
@@ -4530,7 +5443,7 @@ proc ::Yadt::Prepare_Mark_Diffs {} {
     variable ::Yadt::WIDGETS
     variable ::Yadt::MAP_COLOR
 
-    foreach tag { currtag difftag deltag instag inlinetag inlineinstag inlinechgtag chgtag overlaptag sel } {
+    foreach tag { currtag textcurrtag difftag deltag instag inlinetag inlineinstag inlinechgtag chgtag overlaptag sel } {
         foreach win [ concat [ ::Yadt::Get_Diff_Wdg_List ] $WIDGETS(diff_lines_text) ] {
             eval $win tag configure $tag $OPTIONS($tag)
         }
@@ -4547,6 +5460,8 @@ proc ::Yadt::Add_Lines {} {
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::WIDGETS
+    variable ::Yadt::LCSDATA
+    variable ::Yadt::DIFF_FILES
 
     set combo_values {}
     set combo_width 10
@@ -4562,8 +5477,8 @@ proc ::Yadt::Add_Lines {} {
 
                 if { $result != "" } {
                     incr DIFF_INT(count)
-                    set DIFF_INT(pdiff,$DIFF_INT(count)) "$result"
-                    ::Yadt::Add_Diff2_Line $DIFF_INT(count)
+                    set DIFF_INT($DIFF_INT(count),pdiff) "$result"
+                    ::Yadt::Align_One_Diff2 $DIFF_INT(count)
                     set combo_value [ format "%-6d: %s" $DIFF_INT(count) $diff ]
                     lappend combo_values $combo_value
                     set combo_width [ ::CmnTools::MaxN $combo_width [ string length $combo_value ] ]
@@ -4573,19 +5488,44 @@ proc ::Yadt::Add_Lines {} {
         }
 
         3 {
+            foreach { lines(1) lines(2) lines(3) } $LCSDATA(unchanged) { }
+
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                set prev_idx($i) -1
+                set idx($i) -1
+            }
+
+            set count 0
+            for { set i 0 } { $i < [ llength $lines(1) ] } { incr i } {
+
+                for { set j 1 } { $j <= $DIFF_TYPE } { incr j } {
+                    set idx($j) [ lindex $lines($j) $i ]
+                }
+
+                ::Yadt::Collect_Diff3_From_Lcs prev_idx idx count
+                set prev_idx(1) $idx(1)
+                set prev_idx(2) $idx(2)
+                set prev_idx(3) $idx(3)
+            }
+
+            # Last diff, if any
+            for { set j 1 } { $j <= $DIFF_TYPE } { incr j } {
+                set prev_idx($j) $idx($j)
+                set idx($j) [ llength $DIFF_FILES(strings,$j) ]
+            }
+            ::Yadt::Collect_Diff3_From_Lcs prev_idx idx count
+
             set num_diff [ llength [ array names DIFF3 *,which_file ] ]
             set DIFF_INT(count) 0
 
+            ::Yadt::Add_Diff3_Info_Strings
+
             for { set i 1 } { $i <= $num_diff } { incr i } {
-                for { set j 1 } { $j <= $DIFF_TYPE } { incr j } {
-                    set result [ ::Yadt::Analyze_Diff3 $i $j \
-                                     $DIFF3($i,$j,diff) ]
-                    if { $result != "" } {
-                        set DIFF_INT($i,$j,pdiff) "$result"
-                    }
-                }
+
                 incr DIFF_INT(count)
-                ::Yadt::Add_Diff3_Line $i
+                ::Yadt::Status_Msg menustatus "Analyzing difference $i of $num_diff ..."
+                ::Yadt::Align_One_Diff3 $i
+                ::Yadt::Status_Msg menustatus "Analyzing difference $i of $num_diff ...Done"
                 set combo_value [ format "%-6d: %s: %s: %s" \
                                       $DIFF_INT(count) \
                                       $DIFF3($i,1,diff) \
@@ -4594,12 +5534,21 @@ proc ::Yadt::Add_Lines {} {
                 lappend combo_values $combo_value
                 set combo_width [ ::CmnTools::MaxN $combo_width [ string length $combo_value ] ]
             }
+
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                set len($i) [ llength $DIFF_FILES(strings,$i) ]
+            }
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                set fnum($i) [ expr $len($i) + $DIFF_INT(delta,$i) ]
+            }
+
+            ::Yadt::Append_Final_Lcs_Lines fnum
+
             set diff_num $DIFF_INT(count)
         }
     }
 
-    $WIDGETS(diff_combo) configure -width $combo_width
-    $WIDGETS(diff_combo) configure -values $combo_values
+    $WIDGETS(diff_combo) configure -width $combo_width -values $combo_values
 
     return $diff_num
 }
@@ -4616,13 +5565,14 @@ proc ::Yadt::Update_Merge_Marks {} {
     variable ::Yadt::MERGE_TEXT_WDG
     variable ::Yadt::MERGE_INFO_WDG
     variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
 
     for { set i $MERGE_START } { $i <= $DIFF_TYPE } { incr i } {
         eval $MERGE_TEXT_WDG($i) tag delete [ $MERGE_TEXT_WDG($i) tag names ]
         eval $MERGE_INFO_WDG($i) tag delete [ $MERGE_INFO_WDG($i) tag names ]
     }
 
-    foreach tag { merge1tag merge2tag merge3tag sel } {
+    foreach tag { merge1tag merge2tag merge3tag textcurrtag sel } {
         foreach win [ ::Yadt::Get_Merge_Wdg_List ] {
             eval $win tag configure $tag $OPTIONS($tag)
         }
@@ -4638,7 +5588,7 @@ proc ::Yadt::Update_Merge_Marks {} {
         2 {
             set num_diff [ llength $DIFF2(diff) ]
             for { set i 1 } { $i <= $num_diff } { incr i } {
-                foreach [ list thisdiff s1 e1 s2 e2 type ] $DIFF_INT(pdiff,$i) { }
+                foreach [ list thisdiff s1 e1 s2 e2 type ] $DIFF_INT($i,pdiff) { }
                 if { $type == "a" } {
                     incr s1
                 }
@@ -4649,12 +5599,12 @@ proc ::Yadt::Update_Merge_Marks {} {
             }
 
             for { set i 1 } { $i <= $num_diff } { incr i } {
-                set DIFF_INT(merge$i) 1
+                set DIFF_INT(normal_merge$i) 1
             }
 
             for { set i 1 } { $i <= $num_diff } { incr i } {
-                foreach [ list thisdiff s1 e1 s2 e2 type ] $DIFF_INT(pdiff,$i) { }
-                if { $DIFF_INT(merge$i) == 1 } {
+                foreach [ list thisdiff s1 e1 s2 e2 type ] $DIFF_INT($i,pdiff) { }
+                if { $DIFF_INT(normal_merge$i) == 1 } {
                     if { $type != "a" } {
                         set lines [ expr { $e1 - $s1 + 1 } ]
                         $MERGE_TEXT_WDG(2) tag add merge1tag mark$i mark$i+${lines}lines
@@ -4667,57 +5617,78 @@ proc ::Yadt::Update_Merge_Marks {} {
                 if { $pos == 0 } {
                     set pos 1
                 }
-                set lines [ ::Yadt::Diff2_Size $pos $DIFF_INT(merge$pos) ]
+                set lines [ ::Yadt::Diff_Size $pos $DIFF_INT(normal_merge$pos) ]
                 $MERGE_INFO_WDG(2) tag add \
                     currtag mark$pos "mark$pos+${lines}lines"
             }
         }
         3 {
-            set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+            ::Yadt::Set_Diffs_Merge_Marks
+            set num_diff [ llength [ array names RANGES ] ]
             for { set i 1 } { $i <= $num_diff } { incr i } {
                 for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-                    foreach [ list thisdiff($j) s($j) e($j) type($j) ] $DIFF_INT($i,1,pdiff) { }
-                    if { $type($j) == "a" } {
-                        incr s($j)
-                    }
-                    $MERGE_INFO_WDG($j) mark set mark${j}_$i $s($j).0
-                    $MERGE_INFO_WDG($j) mark gravity mark${j}_$i left
-                    $MERGE_TEXT_WDG($j) mark set mark${j}_$i $s($j).0
-                    $MERGE_TEXT_WDG($j) mark gravity mark${j}_$i left
+                    set DIFF_INT(expert_merge$i,$j) 1
+                    set DIFF_INT($i,$j,expert_resolved) 0
                 }
             }
+        }
+    }
+}
 
-            # Default merge methods - from file A (Base)
-            for { set i 1 } { $i <= $num_diff } { incr i } {
-                for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-                    set DIFF_INT(merge$i,$j) 1
-                    set DIFF_INT($i,$j,resolved) 0
-                }
-            }
+#===============================================================================
 
-            for { set i 1 } { $i <= $num_diff } { incr i } {
-                for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-                    foreach [ list thisdiff($j) s($j) e($j) type($j) ] $DIFF_INT($i,1,pdiff) { }
-                    if { $DIFF_INT(merge$i,$j) == 1 } {
-                        if { $type($j) != "a" } {
-                            set lines [ expr { $e($j) - $s($j) + 1 } ]
-                            $MERGE_TEXT_WDG($j) tag add merge1tag mark${j}_$i mark${j}_$i+${lines}lines
-                        }
-                    }
-                }
-            }
+proc ::Yadt::Set_Diffs_Merge_Marks {} {
 
-            if { $num_diff > 0 } {
-                set pos $DIFF_INT(pos)
-                if { $pos == 0 } {
-                    set pos 1
-                }
-                for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-                    set lines [ ::Yadt::Diff3_Size $pos $DIFF_INT(merge${pos},$j) ]
-                    $MERGE_INFO_WDG($j) tag add \
-                        currtag mark${j}_$pos "mark${j}_${pos}+${lines}lines"
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::MERGE_START
+    variable ::Yadt::MERGE_INFO_WDG
+    variable ::Yadt::MERGE_TEXT_WDG
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::DIFF3
+
+    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+    for { set i 1 } { $i <= $num_diff } { incr i } {
+        for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
+            foreach [ list thisdiff($j) s($j) e($j) type($j) ] $DIFF_INT($i,1,pdiff) { }
+            if { $type($j) == "a" } {
+                incr s($j)
+            }
+            $MERGE_INFO_WDG($j) mark set mark${j}_$i $s($j).0
+            $MERGE_INFO_WDG($j) mark gravity mark${j}_$i left
+            $MERGE_TEXT_WDG($j) mark set mark${j}_$i $s($j).0
+            $MERGE_TEXT_WDG($j) mark gravity mark${j}_$i left
+        }
+    }
+
+    # Default merge methods - from file A (Base)
+    for { set i 1 } { $i <= $num_diff } { incr i } {
+        for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
+            set DIFF_INT(normal_merge$i,$j) 1
+            set DIFF_INT($i,$j,normal_resolved) 0
+        }
+    }
+
+    for { set i 1 } { $i <= $num_diff } { incr i } {
+        for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
+            foreach [ list thisdiff($j) s($j) e($j) type($j) ] $DIFF_INT($i,1,pdiff) { }
+            if { $DIFF_INT(normal_merge$i,$j) == 1 } {
+                if { $type($j) != "a" } {
+                    set lines [ expr $e($j) - $s($j) + 1 ]
+                    $MERGE_TEXT_WDG($j) tag add merge1tag mark${j}_$i mark${j}_$i+${lines}lines
                 }
             }
+        }
+    }
+
+    if { $num_diff > 0 } {
+        set pos $DIFF_INT(pos)
+        if { $pos == 0 } {
+            set pos 1
+        }
+        for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
+            set lines [ ::Yadt::Diff_Size $pos $DIFF_INT(normal_merge${pos},$j) ]
+            $MERGE_INFO_WDG($j) tag add \
+                currtag mark${j}_$pos "mark${j}_${pos}+${lines}lines"
         }
     }
 }
@@ -4730,13 +5701,21 @@ proc ::Yadt::Set_All_Tags {} {
     variable ::Yadt::DIFF2
     variable ::Yadt::DIFF3
     variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
 
     switch -- $DIFF_TYPE {
         2 {
             set num_diff [ llength $DIFF2(diff) ]
         }
         3 {
-            set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+            switch -- $OPTIONS(merge_mode) {
+                normal {
+                    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+                }
+                expert {
+                    set num_diff [ llength [ array names RANGES ] ]
+                }
+            }
         }
     }
 
@@ -4788,7 +5767,7 @@ proc ::Yadt::Toggle_Inline_Tags {} {
 
 #===============================================================================
 
-proc ::Yadt::Inline_Tags { action pos } {
+proc ::Yadt::Inline_Tags { action diff_id } {
 
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::DIFF_INT
@@ -4803,8 +5782,8 @@ proc ::Yadt::Inline_Tags { action pos } {
     }
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        for { set j 0 } { $j < $DIFF_INT(scrinline,$pos,$i) } { incr j } {
-            foreach { line startcol endcol tag } $DIFF_INT(scrinline,$pos,$i,$j) { }
+        for { set j 0 } { $j < $DIFF_INT(scrinline,$diff_id,$i) } { incr j } {
+            foreach { line startcol endcol tag } $DIFF_INT(scrinline,$diff_id,$i,$j) { }
             ::Yadt::Inline_Tag $action $TEXT_WDG($i) $tag $line $startcol $endcol
         }
     }
@@ -4826,23 +5805,23 @@ proc ::Yadt::Inline_Tag { action wdg tag line startcol endcol } {
 
 #===============================================================================
 
-proc ::Yadt::Set_Tag { pos newtag { oldtag "" } { setpos 0 } } {
+proc ::Yadt::Set_Tag { diff_id tag } {
 
     variable ::Yadt::DIFF_TYPE
 
     switch -- $DIFF_TYPE {
         2 {
-            ::Yadt::Set_Tag2 $pos $newtag $oldtag $setpos
+            ::Yadt::Set_Tag2 $diff_id $tag
         }
         3 {
-            ::Yadt::Set_Tag3 $pos $newtag $oldtag $setpos
+            ::Yadt::Set_Tag3 $diff_id $tag
         }
     }
 }
 
 #===============================================================================
 
-proc ::Yadt::Set_Tag2 { pos newtag { oldtag "" } { setpos 0 } } {
+proc ::Yadt::Set_Tag2 { diff_id tag } {
 
     variable ::Yadt::DIFF_INT
     variable ::Yadt::TEXT_WDG
@@ -4852,33 +5831,11 @@ proc ::Yadt::Set_Tag2 { pos newtag { oldtag "" } { setpos 0 } } {
     variable ::Yadt::MERGE_INFO_WDG
     variable ::Yadt::OPTIONS
 
-    if ![ info exists DIFF_INT(scrdiff,$pos) ] {
-        return
-    }
+    if ![ info exists DIFF_INT($diff_id,scrdiff) ] return
 
-    foreach { thisdiff s1 e1 s2 e2 dt } $DIFF_INT(scrdiff,$pos) { }
+    foreach { start end type } $DIFF_INT($diff_id,scrdiff) { }
 
-    if { "$oldtag" != "" } {
-        set e1next "[ expr { $e1 + 1 } ].0"
-        set e2next "[ expr { $e2 + 1 } ].0"
-        $TEXT_WDG(1) tag remove $oldtag $s1.0 $e1next
-        $TEXT_INFO_WDG(1) tag remove $oldtag $s1.0 $e1next
-        $TEXT_WDG(2) tag remove $oldtag $s2.0 $e2next
-        $TEXT_INFO_WDG(2) tag remove $oldtag $s2.0 $e2next
-        $TEXT_NUM_WDG(1) tag remove $oldtag $s1.0 $e1next
-        $TEXT_NUM_WDG(2) tag remove $oldtag $s2.0 $e2next
-
-        # If there is no merge window variables DIFF_INT(merge...) do not exist
-        if [ info exists DIFF_INT(merge$pos) ] {
-            set lines [ ::Yadt::Diff2_Size $pos $DIFF_INT(merge$pos) ]
-            $MERGE_INFO_WDG(2) tag remove \
-                $oldtag mark$pos "mark${pos}+${lines}lines"  
-            $MERGE_TEXT_WDG(2) tag remove \
-                $oldtag mark$pos "mark${pos}+${lines}lines"
-        }
-    }
-
-    switch -- $dt {
+    switch -- $type {
         "d" {
             set coltag deltag
         }
@@ -4891,48 +5848,31 @@ proc ::Yadt::Set_Tag2 { pos newtag { oldtag "" } { setpos 0 } } {
     }
 
     # Create tag: only create, it will be shown or not later
-    if { $newtag != "currtag" } {
-        ::Yadt::Create_Line_Tag $pos 1 $newtag $s1 $e1
-    }
-    ::Yadt::Create_Line_Tag $pos 2 $coltag $s2 $e2
+    ::Yadt::Create_Line_Tag $diff_id 1 $tag $start $end
+    ::Yadt::Create_Line_Tag $diff_id 2 $coltag $start $end
 
     if { $OPTIONS(tagln) } {
-        ::Yadt::Add_Tag $TEXT_NUM_WDG(1) $newtag $s1 $e1
-        ::Yadt::Add_Tag $TEXT_NUM_WDG(2) $newtag $s2 $e2
-        ::Yadt::Add_Tag $TEXT_NUM_WDG(2) $coltag $s2 $e2
+        ::Yadt::Add_Tag $TEXT_NUM_WDG(1) $tag $start $end
+        ::Yadt::Add_Tag $TEXT_NUM_WDG(2) $tag $start $end
+        ::Yadt::Add_Tag $TEXT_NUM_WDG(2) $coltag $start $end
     }
     if { $OPTIONS(taginfo) } {
-        ::Yadt::Add_Tag $TEXT_INFO_WDG(1) $newtag $s1 $e1
-        ::Yadt::Add_Tag $TEXT_INFO_WDG(2) $newtag $s1 $e1
-        ::Yadt::Add_Tag $TEXT_INFO_WDG(2) $coltag $s2 $e2
+        ::Yadt::Add_Tag $TEXT_INFO_WDG(1) $tag $start $end
+        ::Yadt::Add_Tag $TEXT_INFO_WDG(2) $tag $start $end
+        ::Yadt::Add_Tag $TEXT_INFO_WDG(2) $coltag $start $end
     }
 
-    # If there is no merge window variables DIFF_INT(merge...) do not exist
-    if [ info exists DIFF_INT(merge$pos) ] {
-        set lines [ ::Yadt::Diff2_Size $pos $DIFF_INT(merge$pos) ]
-        $MERGE_INFO_WDG(2) tag add $newtag mark$pos "mark${pos}+${lines}lines"
-        $MERGE_TEXT_WDG(2) tag add $newtag mark$pos "mark${pos}+${lines}lines"
+    # If there is no merge window variables DIFF_INT($OPTUIONS(merge_mode)_merge...) do not exist
+    if [ info exists DIFF_INT(normal_merge${diff_id}) ] {
+        set lines [ ::Yadt::Diff_Size $diff_id $DIFF_INT(normal_merge${diff_id}) ]
+        $MERGE_INFO_WDG(2) tag add $tag mark${diff_id} "mark${diff_id}+${lines}lines"
+        $MERGE_TEXT_WDG(2) tag add $tag mark${diff_id} "mark${diff_id}+${lines}lines"
     }
-
-    if { $setpos } {
-        if { $OPTIONS(autocenter) } {
-            ::Yadt::Diff_Center
-        } else {
-            $TEXT_WDG(1) see $s1.0
-            $TEXT_WDG(2) see $s2.0
-            $TEXT_WDG(1) mark set insert $s1.0
-            $TEXT_WDG(2) mark set insert $s2.0
-
-            $MERGE_TEXT_WDG(2) see mark$pos
-        }
-    }
-
-    return $thisdiff
 }
 
 #===============================================================================
 
-proc ::Yadt::Set_Tag3 { diff_id newtag { oldtag "" } { setpos 0 } } {
+proc ::Yadt::Set_Tag3 { diff_id tag } {
 
     variable ::Yadt::DIFF3
     variable ::Yadt::DIFF_INT
@@ -4944,46 +5884,24 @@ proc ::Yadt::Set_Tag3 { diff_id newtag { oldtag "" } { setpos 0 } } {
     variable ::Yadt::OPTIONS
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::MERGE_START
+    variable ::Yadt::RANGES2DIFF
 
-    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        if ![ info exists DIFF_INT($diff_id,$i,scrdiff) ] {
-            return
-        }
-        foreach [ list thisdiff($i) s($i) e($i) type($i) ] \
-            $DIFF_INT($diff_id,$i,scrdiff) { }
-    }
+    foreach { start end type } [ ::Yadt::Get_Diff_Scr_Params $diff_id ] { }
+    if { $start == -1 && $end == -1 && $type == -1 } return
 
-    if { "$oldtag" != "" } {
-        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-            set e_next "[ expr { $e($i) + 1 } ].0"
-
-            $TEXT_WDG($i) tag remove $oldtag $s($i).0 $e_next
-            $TEXT_INFO_WDG($i) tag remove $oldtag $s($i).0 $e_next
-            $TEXT_NUM_WDG($i) tag remove $oldtag $s($i).0 $e_next
-
-            for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-                # If there is no merge window variables DIFF_INT(merge...) do not exist
-                if [ info exists DIFF_INT(merge${DIFF_INT(pos)},$j) ] {
-                    set lines [ ::Yadt::Diff3_Size $DIFF_INT(pos) $DIFF_INT(merge${DIFF_INT(pos)},$j) ]
-                    $MERGE_INFO_WDG($j) tag remove $oldtag mark${j}_${DIFF_INT(pos)} \
-                        "mark${j}_${DIFF_INT(pos)}+${lines}lines"
-                    $MERGE_TEXT_WDG($j) tag remove $oldtag mark${j}_${DIFF_INT(pos)} \
-                        "mark${j}_${DIFF_INT(pos)}+${lines}lines"
-                }
-            }
-        }
-    }
-
-    set oper "c"
-    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        if { $type($i) == "a" } {
-            set oper "a"
-            break
-        }
+    set oper "a"
+    if { $type == "ccc" } {
+        set oper "c"
     }
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        switch -- $type($i) {
+        set coltag($i) chgtag
+    }
+
+    set i 0
+    foreach t [ split $type {} ] {
+        incr i
+        switch -- $t {
             "a" {
                 set coltag($i) deltag
             }
@@ -4997,6 +5915,15 @@ proc ::Yadt::Set_Tag3 { diff_id newtag { oldtag "" } { setpos 0 } } {
                     }
                 }
             }
+        }
+    }
+
+    switch -- $OPTIONS(merge_mode) {
+        normal {
+            #set which_diff_id $diff_id
+        }
+        expert {
+            set diff_id $RANGES2DIFF($diff_id)
         }
     }
 
@@ -5018,54 +5945,318 @@ proc ::Yadt::Set_Tag3 { diff_id newtag { oldtag "" } { setpos 0 } } {
         }
     }    
 
-    if { $newtag != "currtag" } {
-        ::Yadt::Create_Line_Tag $diff_id 1 $newtag $s(1) $e(1)
-    }
-
-    ::Yadt::Create_Line_Tag $diff_id 2 $coltag(2) $s(2) $e(2)
-    ::Yadt::Create_Line_Tag $diff_id 3 $coltag(3) $s(3) $e(3)
+    ::Yadt::Create_Line_Tag $diff_id 1 $tag $start $end
+    ::Yadt::Mark_Only_Different3_Lines $diff_id $start $end $coltag(2) $coltag(3)
 
     if { $OPTIONS(tagln) } {
-        ::Yadt::Add_Tag $TEXT_NUM_WDG(1) $newtag $s(1) $e(1)
-        ::Yadt::Add_Tag $TEXT_NUM_WDG(2) $newtag $s(2) $e(2)
-        ::Yadt::Add_Tag $TEXT_NUM_WDG(3) $newtag $s(3) $e(3)
-        ::Yadt::Add_Tag $TEXT_NUM_WDG(2) $coltag(2) $s(2) $e(2)
-        ::Yadt::Add_Tag $TEXT_NUM_WDG(3) $coltag(3) $s(3) $e(3)
+        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+            ::Yadt::Add_Tag $TEXT_NUM_WDG($i) $tag $start $end
+        }
+        ::Yadt::Add_Tag $TEXT_NUM_WDG(2) $coltag(2) $start $end
+        ::Yadt::Add_Tag $TEXT_NUM_WDG(3) $coltag(3) $start $end
     }
 
     if { $OPTIONS(taginfo) } {
-        ::Yadt::Add_Tag $TEXT_INFO_WDG(1) $newtag $s(1) $e(1)
-        ::Yadt::Add_Tag $TEXT_INFO_WDG(2) $newtag $s(2) $e(2)
-        ::Yadt::Add_Tag $TEXT_INFO_WDG(3) $newtag $s(3) $e(3)
-        ::Yadt::Add_Tag $TEXT_INFO_WDG(2) $coltag(2) $s(2) $e(2)
-        ::Yadt::Add_Tag $TEXT_INFO_WDG(3) $coltag(3) $s(3) $e(3)
+        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+            ::Yadt::Add_Tag $TEXT_INFO_WDG($i) $tag $start $end
+        }
+
+        ::Yadt::Add_Tag $TEXT_INFO_WDG(2) $coltag(2) $start $end
+        ::Yadt::Add_Tag $TEXT_INFO_WDG(3) $coltag(3) $start $end
     }
 
     for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-        # If there is no merge window variables DIFF_INT(merge...) do not exist
-        if [ info exists DIFF_INT(merge${DIFF_INT(pos)},$j) ] {
-            set lines [ ::Yadt::Diff3_Size $DIFF_INT(pos) $DIFF_INT(merge${DIFF_INT(pos)},$j) ]
-            $MERGE_INFO_WDG($j) tag add $newtag mark${j}_${DIFF_INT(pos)} \
+        # If there is no merge window variables DIFF_INT(normal_merge...) do not exist
+        if [ info exists DIFF_INT(normal_merge${DIFF_INT(pos)},$j) ] {
+            set lines [ ::Yadt::Diff_Size $DIFF_INT(pos) $DIFF_INT(normal_merge${DIFF_INT(pos)},$j) ]
+            $MERGE_INFO_WDG($j) tag add $tag mark${j}_${DIFF_INT(pos)} \
                 "mark${j}_${DIFF_INT(pos)}+${lines}lines"
-            $MERGE_TEXT_WDG($j) tag add $newtag mark${j}_${DIFF_INT(pos)} \
+            $MERGE_TEXT_WDG($j) tag add $tag mark${j}_${DIFF_INT(pos)} \
                 "mark${j}_${DIFF_INT(pos)}+${lines}lines"
         }
     }
+}
+
+#===============================================================================
+
+proc ::Yadt::Current_Tag { action diff_id { setpos 1 } } {
+
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::MERGE_START
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::TEXT_WDG
+    variable ::Yadt::MERGE_TEXT_WDG
+
+    switch -- $action {
+        remove -
+        add {}
+        default {
+            return -code error "Unsupported action <$action>"
+        }
+    }
+
+    ::Yadt::Current_Text_Tag $action $diff_id
+    ::Yadt::Current_Merge_Tag $action $diff_id
 
     if { $setpos } {
         if { $OPTIONS(autocenter) } {
             ::Yadt::Diff_Center
         } else {
-            $TEXT_WDG(1) see $s(1).0
-            $TEXT_WDG(2) see $s(2).0
-            $TEXT_WDG(3) see $s(3).0
-            $TEXT_WDG(1) mark set insert $s(1).0
-            $TEXT_WDG(2) mark set insert $s(2).0
-            $TEXT_WDG(3) mark set insert $s(3).0
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                $TEXT_WDG($i) see $s($i).0
+                $TEXT_WDG($i) mark set insert $s($i).0
+            }
+            for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
+                if [ info exists DIFF_INT(normal_merge$diff_id,$j) ] {
+                    $MERGE_TEXT_WDG($j) see mark${j}_${diff_id}
+                }
+            }
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Current_Text_Tag { action diff_id } {
+
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::TEXT_WDG
+    variable ::Yadt::TEXT_NUM_WDG
+    variable ::Yadt::TEXT_INFO_WDG
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::RANGES
+
+    foreach { start end type } [ ::Yadt::Get_Diff_Scr_Params $diff_id ] { }
+    if { $start == -1 && $end == -1 && $type == -1 } return
+
+    switch -- $action {
+        remove {
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+
+                ::Yadt::Remove_Tag $TEXT_WDG($i) currtag $start $end
+                ::Yadt::Remove_Tag $TEXT_WDG($i) textcurrtag $start $end
+
+                if { $OPTIONS(taginfo) } {
+                    ::Yadt::Remove_Tag $TEXT_INFO_WDG($i) currtag $start $end
+                    ::Yadt::Remove_Tag $TEXT_INFO_WDG($i) textcurrtag $start $end
+                }
+                if { $OPTIONS(tagln) } {
+                    ::Yadt::Remove_Tag $TEXT_NUM_WDG($i) currtag $start $end
+                    ::Yadt::Remove_Tag $TEXT_NUM_WDG($i) textcurrtag $start $end
+                }
+            }
+        }
+        add {
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+
+                if { $OPTIONS(merge_mode) == "expert" } {
+                    ::Yadt::Add_Tag $TEXT_WDG($i) textcurrtag $start $end
+                }
+
+                if { $OPTIONS(taginfo) } {
+                    ::Yadt::Add_Tag $TEXT_INFO_WDG($i) currtag $start $end
+                    if { $OPTIONS(merge_mode) == "expert" } {
+                        ::Yadt::Add_Tag $TEXT_INFO_WDG($i) textcurrtag $start $end
+                    }
+                }
+                if { $OPTIONS(tagln) } {
+                    ::Yadt::Add_Tag $TEXT_NUM_WDG($i) currtag $start $end
+                    if { $OPTIONS(merge_mode) == "expert" } {
+                        ::Yadt::Add_Tag $TEXT_NUM_WDG($i) textcurrtag $start $end
+                    }
+                }
+            }
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Current_Merge_Tag { action diff_id } {
+
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::MERGE_TEXT_WDG
+    variable ::Yadt::MERGE_INFO_WDG
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::MERGE_START
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES2DIFF
+    variable ::Yadt::RANGES
+
+    if { $diff_id == 0 } return
+
+    switch -- $DIFF_TYPE {
+        2 {
+            for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
+                # If there is no merge window variables DIFF_INT(normal_merge...) do not exist
+                if [ info exists DIFF_INT(normal_merge$diff_id) ] {
+                    set lines [ ::Yadt::Diff_Size $diff_id $DIFF_INT(normal_merge${diff_id}) ]
+                    $MERGE_INFO_WDG($j) tag $action \
+                        currtag mark${diff_id} "mark${diff_id}+${lines}lines"
+                    $MERGE_TEXT_WDG($j) tag $action \
+                        currtag mark${diff_id} "mark${diff_id}+${lines}lines"
+                }
+            }
+        }
+        3 {
+
+            switch -- $OPTIONS(merge_mode) {
+                normal {
+                    for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
+                        set offset($j) 0
+                        set lines($j) [ ::Yadt::Diff_Size $diff_id $DIFF_INT($OPTIONS(merge_mode)_merge$diff_id,$j) ]
+                    }
+                }
+                expert {
+                    for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
+                        set offset($j) [ ::Yadt::Get_Range_Offset_Inside_Diff $diff_id $j ]
+                        set lines($j) [ ::Yadt::Diff_Size $diff_id $DIFF_INT($OPTIONS(merge_mode)_merge$diff_id,$j) ]
+                    }
+                    set diff_id $RANGES2DIFF($diff_id)
+                }
+            }
 
             for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-                $MERGE_TEXT_WDG($j) see mark${j}_$pos
+                if [ info exists DIFF_INT(normal_merge$diff_id,$j) ] {
+                    set m_start "mark${j}_$diff_id+$offset($j)lines"
+                    set m_end "mark${j}_$diff_id+$offset($j)lines+$lines($j)lines"
+                    $MERGE_TEXT_WDG($j) tag remove textcurrtag $m_start $m_end
+                    $MERGE_INFO_WDG($j) tag remove textcurrtag $m_start $m_end
+                    $MERGE_INFO_WDG($j) tag $action currtag $m_start $m_end
+                    if { $OPTIONS(merge_mode) == "expert" } {
+                        $MERGE_INFO_WDG($j) tag $action textcurrtag $m_start $m_end
+                        $MERGE_TEXT_WDG($j) tag $action textcurrtag $m_start $m_end
+                    }
+                }
             }
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Get_Range_Offset_Inside_Diff { range target } {
+
+    variable ::Yadt::RANGES
+    variable ::Yadt::DIFF2RANGES
+    variable ::Yadt::RANGES2DIFF
+    variable ::Yadt::DIFF_INT
+
+    foreach { start end type } [ ::Yadt::Get_Diff_Scr_Params $range ] { }
+
+    set diff_id $RANGES2DIFF($range)
+
+    set lines 0
+
+    foreach r $DIFF2RANGES($diff_id) {
+        foreach { r_start r_end r_type } $RANGES($r) { }
+
+        if { $r_start == $start && $r_end == $end } break
+
+        set method $DIFF_INT(expert_merge$r,$target)
+
+        if { $method == -1 } continue
+
+        foreach i [ split $method {} ] {
+            incr lines [ ::Yadt::Diff_Size $r $i ]
+
+        }
+    }
+
+    return $lines
+}
+
+#===============================================================================
+
+proc ::Yadt::Mark_Only_Different3_Lines { diff_id start end tag2 tag3 } {
+
+    variable ::Yadt::TEXT_WDG
+    variable ::Yadt::TEXT_NUM_WDG
+
+    set size [ expr $end - $start + 1 ]
+
+    for { set i 0 } { $i < $size } { incr i } {
+
+        set t1 ""
+        set t2 ""
+        set t3 ""
+
+        set next_line [ expr $start + $i ]
+        set t1 [ $TEXT_WDG(1) get $next_line.0 $next_line.end ]
+        set num_t1 [ $TEXT_NUM_WDG(1) get $next_line.0 $next_line.end ]
+
+        set t2 [ $TEXT_WDG(2) get $next_line.0 $next_line.end ]
+        set num_t2 [ $TEXT_NUM_WDG(2) get $next_line.0 $next_line.end ]
+
+        set t3 [ $TEXT_WDG(3) get $next_line.0 $next_line.end ]
+        set num_t3 [ $TEXT_NUM_WDG(3) get $next_line.0 $next_line.end ]
+
+        set curtag2 $tag2
+        set curtag3 $tag3
+
+        ::Yadt::Tune_Different3_Tags $diff_id $t1 $t2 $t3 $num_t1 $num_t2 $num_t3 curtag2 curtag3
+
+        if { $curtag2 != "overlaptag" } {
+            ::Yadt::Create_Line_Tag $diff_id 2 $curtag2 $next_line $next_line
+        }
+        if { $curtag3 != "overlaptag" } {
+            ::Yadt::Create_Line_Tag $diff_id 3 $curtag3 $next_line $next_line
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Tune_Different3_Tags { diff_id t1 t2 t3 num_t1 num_t2 num_t3 tag2 tag3 } {
+
+    upvar $tag2 curtag2
+    upvar $tag3 curtag3
+    variable ::Yadt::DIFF3
+
+    if { $num_t1 == "" } {
+        if { $num_t2 == "" || $num_t3 == "" } {
+            if { $num_t2 == "" } {
+                set curtag3 instag
+            }
+            if { $num_t3 == "" } {
+                set curtag2 instag
+            }
+            return
+        }
+
+        if { $t2 == $t3 } {
+            if { $DIFF3($diff_id,which_file) != 0 } {
+                set curtag2 instag
+                set curtag3 instag
+            }
+        } else {
+            if { $t2 != "" } {
+                set curtag2 chgtag
+            }
+            if { $t3 != "" } {
+                set curtag3 chgtag
+            }
+        }
+        return
+    }
+
+    if { $num_t2 == "" || $num_t3 == "" } {
+        if { $num_t2 == "" } {
+            set curtag2 deltag
+        }
+        if { $num_t3 == ""} {
+            set curtag3 deltag
+        }
+    }
+
+    if { $t1 != $t2 || $t1 != $t3 } {
+        if { $t1 != $t2 && $num_t2 != "" } {
+            set curtag2 chgtag
+        }
+        if { $t1 != $t3 && $num_t3 != "" } {
+            set curtag3 chgtag
         }
     }
 }
@@ -5098,22 +6289,22 @@ proc ::Yadt::Define_Tags_Priority {} {
 #===============================================================================
 
 proc ::Yadt::Add_Tag { wdg tag start end } {
-    $wdg tag add $tag $start.0 [ expr { $end + 1 } ].0
+    $wdg tag add $tag $start.0 [ expr $end + 1 ].0
 }
 
 #===============================================================================
 
 proc ::Yadt::Remove_Tag { wdg tag start end } {
-    $wdg tag remove $tag $start.0  [ expr { $end + 1 } ].0
+    $wdg tag remove $tag $start.0  [ expr $end + 1 ].0
 }
 
 #===============================================================================
 
-proc ::Yadt::Create_Line_Tag { pos file_id tag from to } {
+proc ::Yadt::Create_Line_Tag { diff_id file_id tag from to } {
 
     variable ::Yadt::DIFF_INT
 
-    set DIFF_INT(scrtag,$pos,$file_id) [ list $tag $from $to ]
+    lappend DIFF_INT(scrtag,$diff_id,$file_id) [ list $tag $from $to ]
 }
 
 #===============================================================================
@@ -5142,14 +6333,17 @@ proc ::Yadt::Text_Tags { action } {
         for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
             if ![ info exists DIFF_INT(scrtag,$diff_id,$file_id) ] continue
 
-            foreach { tag from to } $DIFF_INT(scrtag,$diff_id,$file_id) { }
+            foreach single_tag $DIFF_INT(scrtag,$diff_id,$file_id) {
 
-            switch -- $action {
-                add {
-                    ::Yadt::Add_Tag $TEXT_WDG($file_id) $tag $from $to
-                }
-                remove {
-                    ::Yadt::Remove_Tag $TEXT_WDG($file_id) $tag $from $to
+                foreach { tag from to } $single_tag { }
+
+                switch -- $action {
+                    add {
+                        ::Yadt::Add_Tag $TEXT_WDG($file_id) $tag $from $to
+                    }
+                    remove {
+                        ::Yadt::Remove_Tag $TEXT_WDG($file_id) $tag $from $to
+                    }
                 }
             }
         }
@@ -5514,6 +6708,11 @@ proc ::Yadt::Draw_Main {} {
         proc ::$TEXT_WDG($i) { command args } $::Yadt::Text_Widget_Proc
     }
 
+    for { set i $MERGE_START } { $i <= $DIFF_TYPE } { incr i } {
+        rename ::$MERGE_TEXT_WDG($i) ::$MERGE_TEXT_WDG($i)_
+        proc ::$MERGE_TEXT_WDG($i) { command args } $::Yadt::Merge_Text_Widget_Proc
+    }
+
     update
     update idletasks
 }
@@ -5526,12 +6725,15 @@ proc ::Yadt::Update_File_Labels {} {
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::MAP_TITLE
     variable ::Yadt::WIDGETS
+    variable ::Yadt::OPTIONS
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
         $WIDGETS(file_title_$i) configure -state normal
         $WIDGETS(file_title_$i) delete 0 end
         $WIDGETS(file_title_$i) insert end "$MAP_TITLE($i) $DIFF_FILES(label,$i)"
         $WIDGETS(file_title_$i) configure -state readonly
+
+        DynamicHelp::add $WIDGETS(file_title_$i) -type balloon -variable ::Yadt::DIFF_FILES(full_path,$i)
     }
 }
 
@@ -5717,7 +6919,14 @@ set ::Yadt::Text_Widget_Proc {
 
             set result_files ""
             set result_text ""
+
+            set WDG_OPTIONS(cursor_position) ""
             for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                if { "${WDG_OPTIONS(active_window)}_" == "$TEXT_WDG($i)_" } {
+                    foreach { ln col } [ split [ $WDG_OPTIONS(active_window) index insert ] "." ] { }
+                    set WDG_OPTIONS(cursor_position) "L: $ln C: $col"
+                }
+
                 append result_files $MAP_TITLE_SHORT($i)
 
                 if { $WDG_OPTIONS(active_window) != "" } {
@@ -5764,6 +6973,33 @@ set ::Yadt::Text_Widget_Proc {
             }
         }
     }
+    return $result
+}
+
+#===============================================================================
+
+set ::Yadt::Merge_Text_Widget_Proc {
+
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::MERGE_START
+    variable ::Yadt::WDG_OPTIONS
+    variable ::Yadt::MERGE_TEXT_WDG
+
+    set real "[ lindex [ info level [ info level ] ] 0 ]_"
+
+    set result [ eval $real $command $args ]
+    if { $command == "mark" } {
+        if { [ lindex $args 0 ] == "set" && [ lindex $args 1 ] == "insert" } {
+            set WDG_OPTIONS(cursor_position) ""
+            for { set i $MERGE_START } { $i <= $DIFF_TYPE } { incr i } {
+                if { "${WDG_OPTIONS(active_window)}_" == "$MERGE_TEXT_WDG($i)_" } {
+                    foreach { ln col } [ split [ $WDG_OPTIONS(active_window) index insert ] "." ] { }
+                    set WDG_OPTIONS(cursor_position) "Line: $ln Col: $col"
+                }
+            }
+        }
+    }
+
     return $result
 }
 
@@ -5825,6 +7061,11 @@ proc ::Yadt::Draw_Menu { } {
     set WIDGETS(menu_item,view,next_conflict) "Next Conflict"
 
     for { set i $MERGE_START } { $i <= $DIFF_TYPE } { incr i } {
+
+        set WIDGETS(menu_item,merge$i,mode) "Mode"
+        set WIDGETS(menu_item,merge$i,mode,normal) "Normal"
+        set WIDGETS(menu_item,merge$i,mode,expert) "Expert"
+
         if { $MERGE_START == $DIFF_TYPE } {
             set WIDGETS(menu_item,merge$i) "Merge"
         } else {
@@ -6031,6 +7272,7 @@ proc ::Yadt::Draw_Menu { } {
             -label $WIDGETS(menu_item,view,prev_conflict) \
             -image prevConflImage \
             -compound left \
+            -accelerator "Control-P" \
             -command [ list ::Yadt::Goto_Conflict -1 ]
     }
 
@@ -6076,6 +7318,7 @@ proc ::Yadt::Draw_Menu { } {
             -label $WIDGETS(menu_item,view,next_conflict) \
             -image nextConflImage \
             -compound left \
+            -accelerator "Control-N" \
             -command [ list ::Yadt::Goto_Conflict 1 ]
     }
 
@@ -6090,6 +7333,39 @@ proc ::Yadt::Draw_Menu { } {
             -activeborder 1 \
             -activebackground black \
             -activeforeground yellow
+
+        if { $DIFF_TYPE == 3 } {
+
+            set WIDGETS(menu_mode) $WIDGETS(window_name).menu.merge$i.mode
+            menu $WIDGETS(menu_mode) \
+                -tearoff 0 \
+                -relief raised \
+                -bd 1 \
+                -activeborder 1 \
+                -activebackground black \
+                -activeforeground yellow
+
+            $WIDGETS(menu_mode) add radiobutton \
+                -label  $WIDGETS(menu_item,merge$i,mode,normal) \
+                -underline 1 \
+                -accelerator "O" \
+                -value "normal" \
+                -variable ::Yadt::OPTIONS(merge_mode) \
+                -command [ list ::Yadt::Toggle_Merge_Mode ]
+
+            $WIDGETS(menu_mode) add radiobutton \
+                -label  $WIDGETS(menu_item,merge$i,mode,expert) \
+                -underline 1 \
+                -accelerator "X" \
+                -value "expert" \
+                -variable ::Yadt::OPTIONS(merge_mode) \
+                -command [ list ::Yadt::Toggle_Merge_Mode ]
+
+            $WIDGETS(menu_merge$i) add cascade \
+                -label $WIDGETS(menu_item,merge$i,mode) \
+                -menu  $WIDGETS(menu_mode) \
+                -underline 0
+        }
 
         $WIDGETS(menu_merge$i) add checkbutton \
             -label $WIDGETS(menu_item,merge$i,show_merge) \
@@ -6178,7 +7454,7 @@ proc ::Yadt::Draw_Menu { } {
         -menu $WIDGETS(menu_help) \
         -underline 0
 
-    set about_msg "Yadt - yet-another-diff-tool.\n\
+    set about_msg "YaDT - yet-another-diff-tool.\n\
                   Revision: $CVS_REVISION\n\n\
                   Allows to compare two or three files with merge possibility."
     $WIDGETS(menu_help) add command \
@@ -6213,6 +7489,48 @@ proc ::Yadt::Draw_Menu { } {
 
 #===============================================================================
 
+proc ::Yadt::Create_Popup_Merge_Mode_Switch_Menu {} {
+
+    variable ::Yadt::WIDGETS
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::OPTIONS
+
+    if { $DIFF_TYPE == 2 } return
+
+    set WIDGETS(popup_merge_mode_menu) .yadt_merge_mode_popupMenu
+    if [ winfo exists $WIDGETS(popup_merge_mode_menu) ] {
+        destroy $WIDGETS(popup_merge_mode_menu)
+    }
+
+     menu $WIDGETS(popup_merge_mode_menu) \
+        -tearoff 0 \
+        -relief raised \
+        -bd 1 \
+        -activeborder 1 \
+        -activebackground black \
+        -activeforeground yellow
+
+    $WIDGETS(popup_merge_mode_menu) add radiobutton \
+        -label "Normal Merge Mode" \
+        -compound left \
+        -underline 1 \
+        -variable ::Yadt::OPTIONS(merge_mode) \
+        -value "normal" \
+        -command [ list ::Yadt::Toggle_Merge_Mode ] \
+        -accelerator "O"
+
+    $WIDGETS(popup_merge_mode_menu) add radiobutton \
+        -label "Expert Merge Mode" \
+        -compound left \
+        -underline 1 \
+        -variable ::Yadt::OPTIONS(merge_mode) \
+        -value "expert" \
+        -command [ list ::Yadt::Toggle_Merge_Mode ] \
+        -accelerator "X"
+}
+
+#===============================================================================
+
 proc ::Yadt::Create_Popup_Menu {} {
 
     variable ::Yadt::WIDGETS
@@ -6224,6 +7542,8 @@ proc ::Yadt::Create_Popup_Menu {} {
     }
 
     # Setting menu labels
+    set WIDGETS(popup_item,normal_merge) "Normal Merge Mode"
+    set WIDGETS(popup_item,expert_merge) "Expert Merge Mode"
     set WIDGETS(popup_item,prev_conflict) "Previous Conflict"
     set WIDGETS(popup_item,first_diff) "First Diff"
     set WIDGETS(popup_item,prev_diff) "Previous Diff"
@@ -6244,10 +7564,31 @@ proc ::Yadt::Create_Popup_Menu {} {
     set m $WIDGETS(popup_menu)
 
     if { $DIFF_TYPE == 3 } {
+        $m add radiobutton \
+            -label $WIDGETS(popup_item,normal_merge) \
+            -compound left \
+            -underline 1 \
+            -variable ::Yadt::OPTIONS(merge_mode) \
+            -value "normal" \
+            -command [ list ::Yadt::Toggle_Merge_Mode ] \
+            -accelerator "O"
+
+        $m add radiobutton \
+            -label $WIDGETS(popup_item,expert_merge) \
+            -compound left \
+            -underline 1 \
+            -variable ::Yadt::OPTIONS(merge_mode) \
+            -value "expert" \
+            -command [ list ::Yadt::Toggle_Merge_Mode ] \
+            -accelerator "X"
+
+        $m add separator
+
         $m add command \
             -label $WIDGETS(popup_item,prev_conflict) \
             -image prevConflImage \
             -compound left \
+            -accelerator "Control-P" \
             -command [ list ::Yadt::Popup_Menu_Invoke -prev_conflict ]
     }
 
@@ -6292,6 +7633,7 @@ proc ::Yadt::Create_Popup_Menu {} {
             -label $WIDGETS(popup_item,next_conflict) \
             -image nextConflImage \
             -compound left \
+            -accelerator "Control-N" \
             -command [ list ::Yadt::Popup_Menu_Invoke -next_conflict ]
     }
 
@@ -6301,6 +7643,15 @@ proc ::Yadt::Create_Popup_Menu {} {
         -underline 0 \
         -command [ list ::Yadt::Popup_Menu_Invoke -nearest ] \
         -accelerator "Double-Click"
+}
+
+#===============================================================================
+
+proc ::Yadt:::Show_Merge_Mode_Popup_Menu { x y } {
+
+    variable ::Yadt::WIDGETS
+
+    tk_popup $WIDGETS(popup_merge_mode_menu) $x $y
 }
 
 #===============================================================================
@@ -6350,6 +7701,8 @@ proc ::Yadt::Draw_Toolbar_Elements { } {
     set WIDGETS(tool_bar) [ ::ttk::frame $WIDGETS(window_name).toolbar -relief groove -style Toolbutton ]
     pack $WIDGETS(tool_bar) -side top -fill x -expand 0
 
+    ::Yadt::Draw_Common_Toolbar_Elements
+
     switch -- $DIFF_TYPE {
         2 {
             ::Yadt::Draw_Combo_Toolbar_Element
@@ -6377,8 +7730,6 @@ proc ::Yadt::Draw_Toolbar_Elements { } {
             ::Yadt::Draw_Toolbar_Separator $WIDGETS(tool_bar).sep6
         }
     }
-
-    ::Yadt::Draw_Common_Toolbar_Elements
 }
 
 #===============================================================================
@@ -6400,11 +7751,25 @@ proc ::Yadt::Draw_Combo_Toolbar_Element {} {
               -textvariable ::Yadt::WDG_OPTIONS(curr_diff) ]
 
     bind $WIDGETS(diff_combo) <<ComboboxSelected>> ::Yadt::Move_Indicator_To
+    pack $WIDGETS(diff_combo) -side right -padx 5
 
-    set WDG_OPTIONS(tooltip,$WIDGETS(diff_combo)) "List of found diferencess"
+    set WDG_OPTIONS(tooltip,$WIDGETS(diff_combo)) \
+        "List of found differences"
     lappend elements $WIDGETS(diff_combo)
 
-    pack $WIDGETS(diff_combo) -side left -padx 5
+    ::ttk::checkbutton $WIDGETS(tool_bar).ignore_blanks \
+        -text "Ignore Blanks" \
+        -offvalue 0 \
+        -onvalue 1 \
+        -variable ::Yadt::OPTIONS(ignore_blanks) \
+        -takefocus 0 \
+        -state disabled \
+        -command ::Yadt::Recompute_Diff_On_Bs_Change
+                 
+    pack $WIDGETS(tool_bar).ignore_blanks -side right
+    set WDG_OPTIONS(tooltip,$WIDGETS(tool_bar).ignore_blanks) \
+        "Recompute ignoring blanks"
+    lappend elements $WIDGETS(tool_bar).ignore_blanks
 
     set WIDGETS(b_recompute) \
         [ ::ttk::button $WIDGETS(tool_bar).b_recompute \
@@ -6418,7 +7783,7 @@ proc ::Yadt::Draw_Combo_Toolbar_Element {} {
         "Recompute differences"
     lappend elements $WIDGETS(tool_bar).b_recompute
 
-    pack $WIDGETS(b_recompute) -side left -padx 5
+    pack $WIDGETS(b_recompute) -side right -padx 5
 
     ::Yadt::Bind_Toolbar_Events $elements
 }
@@ -6644,20 +8009,6 @@ proc ::Yadt::Draw_Navigation_Toolbar_Elements {} {
 
     set elements {}
 
-    ::ttk::checkbutton $WIDGETS(tool_bar).ignore_blanks \
-        -text "Ignore Blanks" \
-        -offvalue 0 \
-        -onvalue 1 \
-        -variable ::Yadt::OPTIONS(ignore_blanks) \
-        -takefocus 0 \
-        -state disabled \
-        -command ::Yadt::Recompute_Diff_On_Bs_Change
-                 
-    pack $WIDGETS(tool_bar).ignore_blanks -side left
-    set WDG_OPTIONS(tooltip,$WIDGETS(tool_bar).ignore_blanks) \
-        "Recompute ignoring blanks"
-    lappend elements $WIDGETS(tool_bar).ignore_blanks
-
     if { $DIFF_TYPE == 3 } {
         set WIDGETS(move_prev_confl) \
             [ ::ttk::button $WIDGETS(tool_bar).move_prev_confl \
@@ -6754,47 +8105,6 @@ proc ::Yadt::Draw_Common_Toolbar_Elements {} {
     variable ::Yadt::MERGE_START
 
     set elements {}
-    set WIDGETS(preview_button) \
-        [ ::ttk::checkbutton $WIDGETS(tool_bar).toggle_preview \
-              -text "Preview" \
-              -image previewImage \
-              -takefocus 0 \
-              -onvalue 1 \
-              -offvalue 0 \
-              -style Toolbutton \
-              -variable ::Yadt::OPTIONS(preview_shown) \
-              -command ::Yadt::Toggle_Merge_Window ]
-    pack $WIDGETS(preview_button) -side left
-    set WDG_OPTIONS(tooltip,$WIDGETS(preview_button)) \
-        "Toggle merge preview window"
-    lappend elements $WIDGETS(preview_button)
-
-    set WIDGETS(center_cur) \
-        [ ::ttk::button $WIDGETS(tool_bar).center_cur \
-              -text ">-<" \
-              -image centerDiffImage \
-              -takefocus 0 \
-              -state disabled \
-              -style Toolbutton \
-              -command ::Yadt::Diff_Center ]
-    pack $WIDGETS(center_cur) -side left
-    set WDG_OPTIONS(tooltip,$WIDGETS(center_cur)) \
-        "Center the display around the current diff record"
-    lappend elements $WIDGETS(center_cur)
-
-    ::ttk::button $WIDGETS(tool_bar).find \
-        -text "Find" \
-        -image findImage \
-        -takefocus 0 \
-        -style Toolbutton \
-        -command "
-               ::Yadt::Pack_Find_Bar
-               ::Yadt::Find_In_Text -forward 1
-           "
-    pack $WIDGETS(tool_bar).find -side left
-    set WDG_OPTIONS(tooltip,$WIDGETS(tool_bar).find) \
-        "Show find bar to search for a string within either file"
-    lappend elements $WIDGETS(tool_bar).find
 
     set state [ expr { $OPTIONS(save_always_enabled) ? "normal" : "disabled" } ]
     ::ttk::button $WIDGETS(tool_bar).save \
@@ -6820,8 +8130,49 @@ proc ::Yadt::Draw_Common_Toolbar_Elements {} {
             }
         }
     }
-
     lappend elements $WIDGETS(tool_bar).save
+
+    ::ttk::button $WIDGETS(tool_bar).find \
+        -text "Find" \
+        -image findImage \
+        -takefocus 0 \
+        -style Toolbutton \
+        -command "
+               ::Yadt::Pack_Find_Bar
+               ::Yadt::Find_In_Text -forward 1
+           "
+    pack $WIDGETS(tool_bar).find -side left
+    set WDG_OPTIONS(tooltip,$WIDGETS(tool_bar).find) \
+        "Show find bar to search for a string within either file"
+    lappend elements $WIDGETS(tool_bar).find
+
+    set WIDGETS(center_cur) \
+        [ ::ttk::button $WIDGETS(tool_bar).center_cur \
+              -text ">-<" \
+              -image centerDiffImage \
+              -takefocus 0 \
+              -state disabled \
+              -style Toolbutton \
+              -command ::Yadt::Diff_Center ]
+    pack $WIDGETS(center_cur) -side left
+    set WDG_OPTIONS(tooltip,$WIDGETS(center_cur)) \
+        "Center the display around the current diff record"
+    lappend elements $WIDGETS(center_cur)
+
+    set WIDGETS(preview_button) \
+        [ ::ttk::checkbutton $WIDGETS(tool_bar).toggle_preview \
+              -text "Preview" \
+              -image previewImage \
+              -takefocus 0 \
+              -onvalue 1 \
+              -offvalue 0 \
+              -style Toolbutton \
+              -variable ::Yadt::OPTIONS(preview_shown) \
+              -command ::Yadt::Toggle_Merge_Window ]
+    pack $WIDGETS(preview_button) -side left
+    set WDG_OPTIONS(tooltip,$WIDGETS(preview_button)) \
+        "Toggle merge preview window"
+    lappend elements $WIDGETS(preview_button)
 
     ::Yadt::Bind_Toolbar_Events $elements
 }
@@ -6854,9 +8205,14 @@ proc ::Yadt::Draw_Status_Bar {} {
         -anchor w -relief sunken -bd 1
     pack $WIDGETS(status_bar).menu_status -side left -fill x -expand 1
 
+    label $WIDGETS(status_bar).cursor_position \
+        -textvariable ::Yadt::WDG_OPTIONS(cursor_position) \
+        -anchor c -relief sunken -bd 1 -width 20
+    pack $WIDGETS(status_bar).cursor_position -side left -fill x -expand 0
+
     label $WIDGETS(status_bar).diff_status \
         -textvariable ::Yadt::WDG_OPTIONS(diffstatus) \
-        -anchor e -relief sunken -bd 1 -width 15
+        -anchor e -relief sunken -bd 1 -width 20
     pack $WIDGETS(status_bar).diff_status -side left -fill x -expand 0
 }
 
@@ -7016,49 +8372,49 @@ proc ::Yadt::Restore_Cursor { wdgs } {
 
 #===============================================================================
 
-proc ::Yadt::Reset_Pos_Scrinline { pos } {
+proc ::Yadt::Reset_Pos_Scrinline { diff_id } {
 
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
 
-    array unset DIFF_INT scrinline,$pos,*
+    array unset DIFF_INT scrinline,$diff_id,*
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        set DIFF_INT(scrinline,$pos,$i) 0
+        set DIFF_INT(scrinline,$diff_id,$i) 0
     }
 }
 
 #===============================================================================
 
-proc ::Yadt::Find_Ratcliff_Diff2 { pos l1 l2 s1 s2 } {
+proc ::Yadt::Find_Ratcliff_Diff2 { diff_id l1 l2 s1 s2 } {
 
-    if { $pos == 0 } {
-        ::Yadt::Reset_Pos_Scrinline $pos
+    if { $diff_id == 0 } {
+        ::Yadt::Reset_Pos_Scrinline $diff_id
     }
 
     set len1 [ string length $s1 ]
     set len2 [ string length $s2 ]
 
-    return [ ::Yadt::Fid_Ratcliff_Aux2 1 2  $pos $l1 $l2 $s1 0 $len1 $s2 0 $len2 ]
+    return [ ::Yadt::Fid_Ratcliff_Aux2 1 2 $diff_id $l1 $l2 $s1 0 $len1 $s2 0 $len2 ]
 }
 
 #===============================================================================
 
-proc ::Yadt::Find_Ratcliff_Diff3 { pos l1 l2 l3 s1 s2 s3 } {
+proc ::Yadt::Find_Ratcliff_Diff3 { diff_id l1 l2 l3 s1 s2 s3 } {
 
-    if { $pos == 0 } {
-        ::Yadt::Reset_Pos_Scrinline $pos
+    if { $diff_id == 0 } {
+        ::Yadt::Reset_Pos_Scrinline $diff_id
     }
 
     set len1 [ string length $s1 ]
     set len2 [ string length $s2 ]
     set len3 [ string length $s3 ]
 
-    return [ ::Yadt::Fid_Ratcliff_Aux3 $pos $l1 $l2 $l3 $s1 0 $len1 $s2 0 $len2 $s3 0 $len3 ]
+    return [ ::Yadt::Fid_Ratcliff_Aux3 $diff_id $l1 $l2 $l3 $s1 0 $len1 $s2 0 $len2 $s3 0 $len3 ]
 }
 
 #===============================================================================
 
-proc ::Yadt::Fid_Ratcliff_Aux2 { id1 id2 pos l1 l2 s1 off1 len1 s2 off2 len2 } {
+proc ::Yadt::Fid_Ratcliff_Aux2 { id1 id2 diff_id l1 l2 s1 off1 len1 s2 off2 len2 } {
 
     variable ::Yadt::WIDGETS
     variable ::Yadt::DIFF_INT
@@ -7066,14 +8422,14 @@ proc ::Yadt::Fid_Ratcliff_Aux2 { id1 id2 pos l1 l2 s1 off1 len1 s2 off2 len2 } {
     if { $len1 <= 0 || $len2 <= 0 } {
         if { $len1 == 0 } {
             $WIDGETS(diff_lines_text) tag add instag $id2.$off2 "$id2.$off2+${len2}c"
-            set DIFF_INT(scrinline,$pos,$id2,$DIFF_INT(scrinline,$pos,$id2)) \
+            set DIFF_INT(scrinline,$diff_id,$id2,$DIFF_INT(scrinline,$diff_id,$id2)) \
                 [ list $l2 $off2 [ expr $off2+$len2 ] instag ]
-            incr DIFF_INT(scrinline,$pos,$id2)
+            incr DIFF_INT(scrinline,$diff_id,$id2)
         } elseif { $len2 == 0 } {
             $WIDGETS(diff_lines_text) tag add instag $id1.$off1 "$id1.$off1+${len1}c"
-            set DIFF_INT(scrinline,$pos,$id1,$DIFF_INT(scrinline,$pos,$id1)) \
+            set DIFF_INT(scrinline,$diff_id,$id1,$DIFF_INT(scrinline,$diff_id,$id1)) \
                 [ list $l1 $off1 [ expr $off1+$len1 ] instag ]
-            incr DIFF_INT(scrinline,$pos,$id1)
+            incr DIFF_INT(scrinline,$diff_id,$id1)
         }
         return
     }
@@ -7089,22 +8445,22 @@ proc ::Yadt::Fid_Ratcliff_Aux2 { id1 id2 pos l1 l2 s1 off1 len1 s2 off2 len2 } {
 
         if { $lcsoff1 > $off1 || $lcsoff2 > $off2 } {
             # left
-            ::Yadt::Fid_Ratcliff_Aux2 $id1 $id2 $pos $l1 $l2 $s1 $off1 \
+            ::Yadt::Fid_Ratcliff_Aux2 $id1 $id2 $diff_id $l1 $l2 $s1 $off1 \
                 [ expr $lcsoff1-$off1 ] $s2 $off2 [ expr $lcsoff2-$off2 ]
 
         }
         if { $rightoff1<$off1+$len1 || $rightoff2<$off2+$len2 } {
             # right
-            ::Yadt::Fid_Ratcliff_Aux2 $id1 $id2 $pos $l1 $l2 $s1 $rightoff1 \
+            ::Yadt::Fid_Ratcliff_Aux2 $id1 $id2 $diff_id $l1 $l2 $s1 $rightoff1 \
                 [ expr $off1+$len1-$rightoff1 ] $s2 $rightoff2 \
                 [ expr $off2+$len2-$rightoff2 ]
         }
     } else {
         for { set i 1 } { $i <= 2 } { incr i } {
             $WIDGETS(diff_lines_text) tag add inlinechgtag [ set id$i ].[ set off$i ] "[ set id$i ].[ set off$i ]+[ set len$i ]c"
-            set DIFF_INT(scrinline,$pos,[ set id$i ],$DIFF_INT(scrinline,$pos,[ set id$i ])) \
+            set DIFF_INT(scrinline,$diff_id,[ set id$i ],$DIFF_INT(scrinline,$diff_id,[ set id$i ])) \
                 [ list [ set l$i ] [ set off$i ] [ expr [ set off$i ] + [ set len$i ] ] inlinechgtag ]
-            incr DIFF_INT(scrinline,$pos,[ set id$i ])
+            incr DIFF_INT(scrinline,$diff_id,[ set id$i ])
         }
     }
 
@@ -7113,67 +8469,78 @@ proc ::Yadt::Fid_Ratcliff_Aux2 { id1 id2 pos l1 l2 s1 off1 len1 s2 off2 len2 } {
 
 #===============================================================================
 
-proc ::Yadt::Fid_Ratcliff_Aux3 { pos l1 l2 l3 s1 off1 len1 s2 off2 len2 s3 off3 len3 } {
+proc ::Yadt::Fid_Ratcliff_Aux3 { diff_id l1 l2 l3 s1 off1 len1 s2 off2 len2 s3 off3 len3 } {
 
     variable ::Yadt::WIDGETS
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::DIFF3
 
     if { $len1 <= 0 || $len2 <= 0 || $len3 <= 0 } {
         if { $len1 == 0 && $len2 == 0 } {
             $WIDGETS(diff_lines_text) tag add instag 3.$off3 "3.$off3+${len3}c"
-            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+            set DIFF_INT(scrinline,$diff_id,3,$DIFF_INT(scrinline,$diff_id,3)) \
                 [ list $l3 $off3 [ expr $off3 + $len3 ] instag ]
-            incr DIFF_INT(scrinline,$pos,3)
+            incr DIFF_INT(scrinline,$diff_id,3)
         } elseif { $len1 == 0 && $len3 == 0 } {
             $WIDGETS(diff_lines_text) tag add instag 2.$off2 "2.$off2+${len2}c"
-            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+            set DIFF_INT(scrinline,$diff_id,2,$DIFF_INT(scrinline,$diff_id,2)) \
                 [ list $l2 $off2 [ expr $off2 + $len2 ] instag ]
-            incr DIFF_INT(scrinline,$pos,2)
+            incr DIFF_INT(scrinline,$diff_id,2)
         } elseif { $len2 == 0 && $len3 == 0 } {
             $WIDGETS(diff_lines_text) tag add instag 1.$off1 "1.$off1+${len1}c"
-            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+            set DIFF_INT(scrinline,$diff_id,1,$DIFF_INT(scrinline,$diff_id,1)) \
                 [ list $l1 $off1 [ expr $off1 + $len1 ] instag ]
-            incr DIFF_INT(scrinline,$pos,1)
+            incr DIFF_INT(scrinline,$diff_id,1)
         } elseif { $len1 == 0 } {
             $WIDGETS(diff_lines_text) tag add inlineinstag 2.$off2 "2.$off2+${len2}c"
             $WIDGETS(diff_lines_text) tag add inlineinstag 3.$off3 "3.$off3+${len3}c"
 
-            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+            if { $off1 != 0 || \
+                     ( [ info exists DIFF3($diff_id,which_file) ] && \
+                           $DIFF3($diff_id,which_file) != 0 ) } {
+                set DIFF_INT(scrinline,$diff_id,2,$DIFF_INT(scrinline,$diff_id,2)) \
                 [ list $l2 $off2 [ expr $off2 + $len2 ] inlineinstag ]
-            incr DIFF_INT(scrinline,$pos,2)
+                incr DIFF_INT(scrinline,$diff_id,2)
 
-            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+                set DIFF_INT(scrinline,$diff_id,3,$DIFF_INT(scrinline,$diff_id,3)) \
                 [ list $l3 $off3 [ expr $off3 + $len3 ] inlineinstag ]
-            incr DIFF_INT(scrinline,$pos,3)
-
-            ::Yadt::Fid_Ratcliff_Aux2 2 3 $pos $l2 $l3 $s2 $off2 $len2 $s3 $off3 $len3
+                incr DIFF_INT(scrinline,$diff_id,3)
+            }
+            ::Yadt::Fid_Ratcliff_Aux2 2 3 $diff_id $l2 $l3 $s2 $off2 $len2 $s3 $off3 $len3
         } elseif { $len2 == 0 } {
             $WIDGETS(diff_lines_text) tag add inlineinstag 1.$off1 "1.$off1+${len1}c"
             $WIDGETS(diff_lines_text) tag add inlineinstag 3.$off3 "3.$off3+${len3}c"
 
-            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+            if { $off2 != 0 || \
+                     ( [ info exists DIFF3($diff_id,which_file) ] && \
+                           $DIFF3($diff_id,which_file) != 0 ) } {
+                set DIFF_INT(scrinline,$diff_id,1,$DIFF_INT(scrinline,$diff_id,1)) \
                 [ list $l1 $off1 [ expr $off1 + $len1 ] inlineinstag ]
-            incr DIFF_INT(scrinline,$pos,1)
+                incr DIFF_INT(scrinline,$diff_id,1)
 
-            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+                set DIFF_INT(scrinline,$diff_id,3,$DIFF_INT(scrinline,$diff_id,3)) \
                 [ list $l3 $off3 [ expr $off3 + $len3 ] inlineinstag ]
-            incr DIFF_INT(scrinline,$pos,3)
-
-            ::Yadt::Fid_Ratcliff_Aux2 1 3 $pos $l1 $l3 $s1 $off1 $len1 $s3 $off3 $len3
+                incr DIFF_INT(scrinline,$diff_id,3)
+            }
+            ::Yadt::Fid_Ratcliff_Aux2 1 3 $diff_id $l1 $l3 $s1 $off1 $len1 $s3 $off3 $len3
         } elseif { $len3 == 0 } {
             $WIDGETS(diff_lines_text) tag add inlineinstag 1.$off1 "1.$off1+${len1}c"
             $WIDGETS(diff_lines_text) tag add inlineinstag 2.$off2 "2.$off2+${len2}c"
 
-            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+            if { $off3 != 0 || \
+                     ( [ info exists DIFF3($diff_id,which_file) ] && \
+                           $DIFF3($diff_id,which_file) != 0 ) } {
+                set DIFF_INT(scrinline,$diff_id,1,$DIFF_INT(scrinline,$diff_id,1)) \
                 [ list $l1 $off1 [ expr $off1 + $len1 ] inlineinstag ]
-                incr DIFF_INT(scrinline,$pos,1)
+                incr DIFF_INT(scrinline,$diff_id,1)
 
-            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+                set DIFF_INT(scrinline,$diff_id,2,$DIFF_INT(scrinline,$diff_id,2)) \
                 [ list $l2 $off2 [ expr $off2 + $len2 ] inlineinstag ]
-            incr DIFF_INT(scrinline,$pos,2)
+                incr DIFF_INT(scrinline,$diff_id,2)
+            }
 
-            ::Yadt::Fid_Ratcliff_Aux2 1 2 $pos $l1 $l2 $s1 $off1 $len1 $s2 $off2 $len2
+            ::Yadt::Fid_Ratcliff_Aux2 1 2 $diff_id $l1 $l2 $s1 $off1 $len1 $s2 $off2 $len2
         }
         return
     }
@@ -7191,14 +8558,14 @@ proc ::Yadt::Fid_Ratcliff_Aux3 { pos l1 l2 l3 s1 off1 len1 s2 off2 len2 s3 off3 
 
         if { $lcsoff1 > $off1 || $lcsoff2 > $off2 || $lcsoff3 > $off3 } {
             ::Yadt::Fid_Ratcliff_Aux3 \
-                $pos $l1 $l2 $l3 \
+                $diff_id $l1 $l2 $l3 \
                 $s1 $off1 [ expr $lcsoff1 - $off1 ] \
                 $s2 $off2 [ expr $lcsoff2 - $off2 ] \
                 $s3 $off3 [ expr $lcsoff3 - $off3 ]
         }
         if { $rightoff1 < $off1 + $len1 || $rightoff2 < $off2 + $len2 || $rightoff3 < $off3 + $len3 } {
             ::Yadt::Fid_Ratcliff_Aux3 \
-                $pos $l1 $l2 $l3 \
+                $diff_id $l1 $l2 $l3 \
                 $s1 $rightoff1 [ expr $off1 + $len1 - $rightoff1 ] \
                 $s2 $rightoff2 [ expr $off2 + $len2 - $rightoff2 ] \
                 $s3 $rightoff3 [ expr $off3 + $len3 - $rightoff3 ]
@@ -7206,49 +8573,49 @@ proc ::Yadt::Fid_Ratcliff_Aux3 { pos l1 l2 l3 s1 off1 len1 s2 off2 len2 s3 off3 
     } else {
         if { $s1 == $s2 } {
             $WIDGETS(diff_lines_text) tag add inlinetag 1.$off1 "1.$off1+${len1}c"
-            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+            set DIFF_INT(scrinline,$diff_id,1,$DIFF_INT(scrinline,$diff_id,1)) \
                 [ list $l1 $off1 [ expr $off1 + $len1 ] inlinetag ]
-            incr DIFF_INT(scrinline,$pos,1)
+            incr DIFF_INT(scrinline,$diff_id,1)
             $WIDGETS(diff_lines_text) tag add inlinetag 2.$off2 "2.$off2+${len2}c"
-            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+            set DIFF_INT(scrinline,$diff_id,2,$DIFF_INT(scrinline,$diff_id,2)) \
                 [ list $l2 $off2 [ expr $off2 + $len2 ] inlinetag ]
-            incr DIFF_INT(scrinline,$pos,2)
+            incr DIFF_INT(scrinline,$diff_id,2)
             $WIDGETS(diff_lines_text) tag add inlinechgtag 3.$off3 "3.$off3+${len3}c"
-            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+            set DIFF_INT(scrinline,$diff_id,3,$DIFF_INT(scrinline,$diff_id,3)) \
                 [ list $l3 $off3 [ expr $off3 + $len3 ] inlinechgtag ]
-            incr DIFF_INT(scrinline,$pos,3)
+            incr DIFF_INT(scrinline,$diff_id,3)
         } elseif { $s1 == $s3 } {
             $WIDGETS(diff_lines_text) tag add inlinetag 1.$off1 "1.$off1+${len1}c"
-            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+            set DIFF_INT(scrinline,$diff_id,1,$DIFF_INT(scrinline,$diff_id,1)) \
                 [ list $l1 $off1 [ expr $off1 + $len1 ] inlinetag ]
-            incr DIFF_INT(scrinline,$pos,1)
+            incr DIFF_INT(scrinline,$diff_id,1)
             $WIDGETS(diff_lines_text) tag add inlinechgtag 2.$off3 "2.$off2+${len2}c"
-            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+            set DIFF_INT(scrinline,$diff_id,2,$DIFF_INT(scrinline,$diff_id,2)) \
                 [ list $l2 $off2 [ expr $off2 + $len2 ] inlinechgtag ]
-            incr DIFF_INT(scrinline,$pos,2)
+            incr DIFF_INT(scrinline,$diff_id,2)
             $WIDGETS(diff_lines_text) tag add inlinetag 3.$off3 "3.$off3+${len3}c"
-            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+            set DIFF_INT(scrinline,$diff_id,3,$DIFF_INT(scrinline,$diff_id,3)) \
                 [ list $l3 $off3 [ expr $off3 + $len3 ] inlinetag ]
-            incr DIFF_INT(scrinline,$pos,3)
+            incr DIFF_INT(scrinline,$diff_id,3)
         } elseif { $s2 == $s3 } {
             $WIDGETS(diff_lines_text) tag add inlinechgtag 1.$off3 "1.$off1+${len1}c"
-            set DIFF_INT(scrinline,$pos,1,$DIFF_INT(scrinline,$pos,1)) \
+            set DIFF_INT(scrinline,$diff_id,1,$DIFF_INT(scrinline,$diff_id,1)) \
                 [ list $l1 $off1 [ expr $off1 + $len1 ] inlinechgtag ]
-            incr DIFF_INT(scrinline,$pos,1)
+            incr DIFF_INT(scrinline,$diff_id,1)
             $WIDGETS(diff_lines_text) tag add inlinetag 2.$off2 "2.$off2+${len2}c"
-            set DIFF_INT(scrinline,$pos,2,$DIFF_INT(scrinline,$pos,2)) \
+            set DIFF_INT(scrinline,$diff_id,2,$DIFF_INT(scrinline,$diff_id,2)) \
                 [ list $l2 $off2 [ expr $off2 + $len2 ] inlinetag ]
-            incr DIFF_INT(scrinline,$pos,2)
+            incr DIFF_INT(scrinline,$diff_id,2)
             $WIDGETS(diff_lines_text) tag add inlinetag 3.$off3 "3.$off3+${len3}c"
-            set DIFF_INT(scrinline,$pos,3,$DIFF_INT(scrinline,$pos,3)) \
+            set DIFF_INT(scrinline,$diff_id,3,$DIFF_INT(scrinline,$diff_id,3)) \
                 [ list $l3 $off3 [ expr $off3 + $len3 ] inlinetag ]
-            incr DIFF_INT(scrinline,$pos,3)
+            incr DIFF_INT(scrinline,$diff_id,3)
         } else {
             for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
                 $WIDGETS(diff_lines_text) tag add inlinechgtag $i.[ set off$i ] "$i.[ set off$i ]+[ set len$i ]c"
-                set DIFF_INT(scrinline,$pos,$i,$DIFF_INT(scrinline,$pos,$i)) \
+                set DIFF_INT(scrinline,$diff_id,$i,$DIFF_INT(scrinline,$diff_id,$i)) \
                     [ list [ set l$i ] [ set off$i ] [ expr [ set off$i ] + [ set len$i ] ] inlinechgtag ]
-                incr DIFF_INT(scrinline,$pos,$i)
+                incr DIFF_INT(scrinline,$diff_id,$i)
             }
         }
     }
@@ -7529,10 +8896,10 @@ proc ::Yadt::Map_One_Diff2 { map mapwidth ind factor } {
     variable ::Yadt::DIFF_INT
     variable ::Yadt::MAP_COLOR
 
-    foreach { line s1 e1 s2 e2 type } $DIFF_INT(scrdiff,$ind) { }
+    foreach { start end type } $DIFF_INT($ind,scrdiff) { }
 
-    set y [ expr { int(($s2 - 1) * $factor) } ]
-    set size [ expr { round(($e2 - $s2 + 1) * $factor) } ]
+    set y [ expr { int(($start - 1) * $factor) } ]
+    set size [ expr { round(($end - $start + 1) * $factor) } ]
 
     if { $size < 1 } {
         set size 1
@@ -7556,28 +8923,16 @@ proc ::Yadt::Map_One_Diff3 { map mapwidth ind factor } {
     variable ::Yadt::DIFF3
     variable ::Yadt::MAP_COLOR
 
-    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        foreach [ list thisdiff($i) s($i) e($i) type($i) ] \
-            $DIFF_INT($ind,$i,scrdiff) { }
-        set y($i) [ expr { $s($i) - 1 } ]
-        set size($i) [ expr { $e($i) - $s($i) } ]
-        if { $size($i) < 1 } {
-            set size($i) 1
-        }
-    }
+    foreach [ list start end type ] $DIFF_INT($ind,scrdiff) { }
+    set y [ expr { int(($start - 1) * $factor) } ]
+    set size [ expr { round(($end - $start + 1) * $factor) } ]
 
-    set min_y [ ::CmnTools::MinN $y(1) $y(2) $y(3) ]
-    set max_size [ ::CmnTools::MaxN $size(1) $size(2) $size(3) ]
-
-    set y1 [ expr { round($min_y * $factor) } ]
-    set y2 [ expr { round(($min_y + $max_size)*$factor) } ]
-
-    if { $y2 == $y1 } {
-        incr y2
+    if { $size < 1 } {
+        set size 1
     }
 
     set color black
-    switch -- $type(1)$type(2)$type(3) {
+    switch -- $type {
         "ccc" {
             set color $MAP_COLOR(bg,chgtag)
         }
@@ -7605,7 +8960,7 @@ proc ::Yadt::Map_One_Diff3 { map mapwidth ind factor } {
         set color $MAP_COLOR(bg,overlaptag)
     }
 
-    $map put $color -to 0 $y1 $mapwidth $y2
+    $map put $color -to 0 $y $mapwidth [ expr { $y + $size } ]
 }
 
 #===============================================================================
@@ -7902,9 +9257,11 @@ proc ::Yadt::Bind_Events {} {
     variable ::Yadt::OPTIONS
     variable ::Yadt::WDG_OPTIONS
     variable ::Yadt::WIDGETS
+    variable ::Yadt::DIFF_TYPE
 
     # Popup menu
     foreach wdg [ concat [ ::Yadt::Get_Diff_Wdg_List ] \
+                      [ ::Yadt::Get_Merge_Wdg_List ] \
                       $WIDGETS(mapCanvas) ] {
         bind $wdg <Button-3> { 
             ::Yadt:::Show_Popup_Menu %X %Y 
@@ -7914,6 +9271,8 @@ proc ::Yadt::Bind_Events {} {
     foreach wdg [ concat [ ::Yadt::Get_Diff_Wdg_List ] \
                       [ ::Yadt::Get_Merge_Wdg_List ] ] {
         bind $wdg <KeyPress> { break }
+        bind $wdg <Alt-Delete> { break }
+        bind $wdg <Alt-BackSpace> { break }
         bind $wdg <Alt-KeyPress> { continue }
 
         bind $wdg <<Paste>> { break }
@@ -7933,6 +9292,8 @@ proc ::Yadt::Bind_Events {} {
         bind $wdg <Control-o> continue
         bind $wdg <Control-f> continue
         bind $wdg <Control-c> continue
+        bind $wdg <Control-n> continue
+        bind $wdg <Control-p> continue
         bind $wdg <Tab> continue
         bind $wdg <Shift-Tab> continue
 
@@ -7980,6 +9341,14 @@ proc ::Yadt::Bind_Events {} {
             "
         }
     }
+
+    if { $DIFF_TYPE == 3 } {
+        foreach wdg [ concat $WIDGETS(diff_combo) $WIDGETS(tool_bar) [ winfo children $WIDGETS(tool_bar) ] ] {
+            bind $wdg <Button-3> { 
+                ::Yadt:::Show_Merge_Mode_Popup_Menu %X %Y 
+            }
+        }
+    }
 }
 
 #===============================================================================
@@ -8011,6 +9380,7 @@ proc ::Yadt::Bind_Choice_Keys { widgets } {
 
 proc ::Yadt::Bind_Navigation_Keys { widgets } {
 
+    variable ::Yadt::DIFF_TYPE
     variable ::Yadt::WIDGETS
 
     foreach wdg $widgets {
@@ -8034,7 +9404,20 @@ proc ::Yadt::Bind_Navigation_Keys { widgets } {
             $WIDGETS(move_last) invoke
             break
         "
-        bind $wdg <q> ::Yadt::Exit
+        bind $wdg <q> "
+            ::Yadt::Exit
+            break
+        "
+        if { $DIFF_TYPE == 3 } {
+            bind $wdg <Control-n> "
+                $WIDGETS(move_next_confl) invoke
+                break
+            "
+            bind $wdg <Control-p> "
+                $WIDGETS(move_prev_confl) invoke
+                break
+            "
+        }
     }
 }
 
@@ -8179,7 +9562,7 @@ proc ::Yadt::Handle_Map_Event { event y } {
             } else {
 
             }
-            catch { unset WDG_OPTIONS(mapScrolling) }
+            unset -nocomplain WDG_OPTIONS(mapScrolling)
         }
     }
 }
@@ -8309,7 +9692,7 @@ proc ::Yadt::Handle_Choice_Buttons2 { ind } {
     variable ::Yadt::WDG_OPTIONS
     variable ::Yadt::DIFF_INT
 
-    set current_method $DIFF_INT(merge$DIFF_INT(pos))
+    set current_method $DIFF_INT(normal_merge$DIFF_INT(pos))
     if { $current_method == -1 } {
         set current_method ""
     }
@@ -8345,8 +9728,9 @@ proc ::Yadt::Handle_Choice_Buttons3 { target ind } {
 
     variable ::Yadt::WDG_OPTIONS
     variable ::Yadt::DIFF_INT
+    variable ::Yadt::OPTIONS
 
-    set current_method $DIFF_INT(merge$DIFF_INT(pos),$target)
+    set current_method $DIFF_INT($OPTIONS(merge_mode)_merge$DIFF_INT(pos),$target)
     if { $current_method == -1 } {
         set current_method ""
     }
@@ -8386,10 +9770,11 @@ proc ::Yadt::Resolve_Handle { target } {
     variable ::Yadt::WIDGETS
     variable ::Yadt::WDG_OPTIONS
     variable ::Yadt::DIFF_INT
+    variable ::Yadt::OPTIONS
 
-    set DIFF_INT($DIFF_INT(pos),$target,resolved) $WDG_OPTIONS(resolve_status_$target)
+    set DIFF_INT($DIFF_INT(pos),$target,$OPTIONS(merge_mode)_resolved) $WDG_OPTIONS(resolve_status_$target)
 
-    if { $DIFF_INT($DIFF_INT(pos),$target,resolved) == 1 } {
+    if { $DIFF_INT($DIFF_INT(pos),$target,$OPTIONS(merge_mode)_resolved) == 1 } {
         set WDG_OPTIONS(tooltip,$WIDGETS(mark$target)) \
             "Unmark current difference as resolved"
     } else {
@@ -8550,8 +9935,7 @@ proc ::Yadt::Update_Scrollbar_And_Thumb {} {
     set wdgs [ ::Yadt::Get_Diff_Wdg_List 0 "text" ]
     if { [ lsearch $wdgs $WDG_OPTIONS(active_window) ] != -1 } {
         set y1y2 [ $WDG_OPTIONS(active_window) yview ]
-        set y1 [ lindex $y1y2 0 ]
-        set y2 [ lindex $y1y2 1 ]
+        lassign $y1y2 y1 y2
         $WIDGETS(v_scroll) set $y1 $y2
         ::Yadt::Move_Thumb $y1 $y2
     }
@@ -8559,8 +9943,7 @@ proc ::Yadt::Update_Scrollbar_And_Thumb {} {
     set merge_wdgs [ ::Yadt::Get_Merge_Wdg_List ]
     if { [ lsearch $merge_wdgs $WDG_OPTIONS(active_window) ] != -1 } {
         set y1y2 [ $WDG_OPTIONS(active_window) yview ]
-        set y1 [ lindex $y1y2 0 ]
-        set y2 [ lindex $y1y2 1 ]
+        lassign $y1y2 y1 y2
         $WIDGETS(v_scroll_merge) set $y1 $y2
     }
 }
@@ -8772,6 +10155,39 @@ proc ::Yadt::Toggle_Merge_Window {} {
 
 #===============================================================================
 
+proc ::Yadt::Toggle_Merge_Mode {} {
+
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::TMP_OPTIONS
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::RANGES2DIFF
+    variable ::Yadt::RANGES2DIFF
+    variable ::Yadt::DIFF2RANGES
+
+    if { $DIFF_TYPE == 2 } {
+        return
+    }
+
+    switch -- $OPTIONS(merge_mode) {
+        normal {
+            set DIFF_INT(pos) $RANGES2DIFF($DIFF_INT(pos))
+        }
+        expert {
+            foreach range $DIFF2RANGES($DIFF_INT(pos)) {
+                ::Yadt::Current_Tag remove $range
+            }
+            set DIFF_INT(pos) [ lindex $DIFF2RANGES($DIFF_INT(pos)) 0 ]
+        }
+    }
+
+    ::Yadt::Set_Diff_Indicator $DIFF_INT(pos) 0 1
+
+    set TMP_OPTIONS(merge_mode) $OPTIONS(merge_mode)
+}
+
+#===============================================================================
+
 
 ################################################################################
 # Navigation and update procs                                                  #
@@ -8815,7 +10231,7 @@ proc ::Yadt::Diff_Center {} {
         }
     }
 
-    after idle { unset ::Yadt::V_SYNC(text) }
+    after idle { unset -nocomplain ::Yadt::V_SYNC(text) }
 }
 
 #===============================================================================
@@ -8833,11 +10249,9 @@ proc ::Yadt::Diff2_Center {} {
 
     if { !$DIFF_INT(count) } return
 
-    if { $DIFF_TYPE > 2 } {
-        return -code error "Wrong 'DIFF_TYPE' value <$DIFF_TYPE>"
-    }
+    if ![ info exists DIFF_INT($DIFF_INT(pos),scrdiff) ] return
 
-    foreach { thisdiff s(1) e(1) s(2) e(2) dt } $DIFF_INT(scrdiff,$DIFF_INT(pos)) { }
+    foreach { start end type } $DIFF_INT($DIFF_INT(pos),scrdiff) { }
 
     set opix [ winfo reqheight $TEXT_WDG(1) ]
     if { $opix == 0 } return
@@ -8845,8 +10259,7 @@ proc ::Yadt::Diff2_Center {} {
     set olin [ $TEXT_WDG(1) cget -height ]
     set npix [ winfo height $TEXT_WDG(1) ]
     set winlines [ expr { $npix * $olin / $opix } ]
-    set diffsize [ ::CmnTools::MaxN [ expr { $e(1) - $s(1) + 1 } ] \
-                       [ expr { $e(2) - $s(2) + 1 } ] ]
+    set diffsize [ expr { $end - $start + 1 } ]
 
     if { $diffsize < $winlines } {
         set h [ expr { ($winlines - $diffsize) / 2 } ]
@@ -8855,14 +10268,14 @@ proc ::Yadt::Diff2_Center {} {
     }
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        set y($i) [ expr { $s($i) - $h } ]
+        set y($i) [ expr { $start - $h } ]
         if { $y($i) < 0 } {
             set y($i) 0
         }
     }
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        $TEXT_WDG($i) mark set insert $s($i).0
+        $TEXT_WDG($i) mark set insert $start.0
     }
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
@@ -8894,10 +10307,8 @@ proc ::Yadt::Diff3_Center {} {
 
     if ![ llength [ array names DIFF3 *,which_file ] ] return
 
-    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        foreach [ list thisdiff($i) s($i) e($i) type($i) ] \
-            $DIFF_INT($DIFF_INT(pos),$i,scrdiff) { }
-    }
+    foreach { start end type } [ ::Yadt::Get_Diff_Scr_Params $DIFF_INT(pos) ] { }
+    if { $start == -1 && $end == -1 && $type == -1 } return
 
     set opix [ winfo reqheight $TEXT_WDG(1) ]
     if { $opix == 0 } return
@@ -8906,9 +10317,7 @@ proc ::Yadt::Diff3_Center {} {
     set npix [ winfo height $TEXT_WDG(1) ]
     set winlines [ expr { $npix * $olin / $opix } ]
 
-    set diffsize [ ::CmnTools::MaxN [ expr { $e(1) - $s(1) + 1 } ] \
-                       [ expr { $e(2) - $s(2) + 1 } ] \
-                       [ expr { $e(3) - $s(3) + 1 } ] ]
+    set diffsize [ expr { $end - $start + 1 } ]
 
     if { $diffsize < $winlines } {
         set h [ expr { ($winlines - $diffsize) / 2 } ]
@@ -8917,14 +10326,14 @@ proc ::Yadt::Diff3_Center {} {
     }
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        set y($i) [ expr { $s($i) - $h } ]
+        set y($i) [ expr { $start - $h } ]
         if { $y($i) < 0 } {
             set y($i) 0
         }
     }
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        $TEXT_WDG($i) mark set insert $s($i).0
+        $TEXT_WDG($i) mark set insert $start.0
     }
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
@@ -8958,7 +10367,7 @@ proc ::Yadt::Merge_Center {} {
         }
     }
 
-    after idle { unset ::Yadt::V_SYNC(merge) }
+    after idle { unset -nocomplain ::Yadt::V_SYNC(merge) }
 }
 
 #===============================================================================
@@ -8975,7 +10384,7 @@ proc ::Yadt::Merge2_Center {} {
 
     if { $DIFF_INT(count) == 0 } return
 
-    set difflines [ ::Yadt::Diff2_Size $DIFF_INT(pos) $DIFF_INT(merge$DIFF_INT(pos)) ]
+    set difflines [ ::Yadt::Diff_Size $DIFF_INT(pos) $DIFF_INT(normal_merge$DIFF_INT(pos)) ]
     set yview [ $MERGE_TEXT_WDG(2) yview ]
 
     set ywindow [ expr { [ lindex $yview 1 ] - [ lindex $yview 0 ] } ]
@@ -9012,12 +10421,13 @@ proc ::Yadt::Merge3_Center {} {
     variable ::Yadt::MERGE_START
     variable ::Yadt::OPTIONS
     variable ::Yadt::WDG_OPTIONS
+    variable ::Yadt::RANGES2DIFF
 
     if { $DIFF_INT(count) == 0 } return
 
     set difflines {}
     for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-        set num [ ::Yadt::Diff3_Size $DIFF_INT(pos) $DIFF_INT(merge$DIFF_INT(pos),$j) ]
+        set num [ ::Yadt::Diff_Size $DIFF_INT(pos) $DIFF_INT($OPTIONS(merge_mode)_merge$DIFF_INT(pos),$j) ]
         lappend difflines $num
     }
 
@@ -9031,7 +10441,14 @@ proc ::Yadt::Merge3_Center {} {
         set yview [ $MERGE_TEXT_WDG($i) yview ]
         set ywindow [ expr { [ lindex $yview 1 ] - [ lindex $yview 0 ] } ]
 
-        set firstline [ $MERGE_TEXT_WDG($i) index mark${i}_$DIFF_INT(pos) ]
+        set pos $DIFF_INT(pos)
+        set offset 0
+        if { $OPTIONS(merge_mode) == "expert" } {
+            set offset [ ::Yadt::Get_Range_Offset_Inside_Diff $DIFF_INT(pos) $i ]
+            set pos $RANGES2DIFF($DIFF_INT(pos))
+        }
+
+        set firstline [ expr { [ $MERGE_TEXT_WDG($i) index mark${i}_$pos ] + $offset } ]
         set totallines [ $MERGE_TEXT_WDG($i) index end ]
 
         if { $totallines == 0 } continue
@@ -9088,8 +10505,7 @@ proc ::Yadt::Move_Nearest { wdg mode args } {
 
     switch -- $mode {
         "xy" {
-            set x [ lindex $args 0 ]
-            set y [ lindex $args 1 ]
+            lassign $args x y
             set index [ $wdg index @$x,$y ]
             set line_num [ expr { int($index) } ]
         }
@@ -9101,7 +10517,7 @@ proc ::Yadt::Move_Nearest { wdg mode args } {
 
     set diff [ ::Yadt::Find_Diff $line_num -screen ]
 
-    ::Yadt::Set_Diff_Indicator $diff 0 1
+    ::Yadt::Set_Diff_Indicator $diff 0 1 "normal"
 }
 
 #===============================================================================
@@ -9144,7 +10560,7 @@ proc ::Yadt::Find2_Diff { line_num search_type } {
         { $i >= $low } \
         { set i [ expr { ($low + $high) / 2 } ] } {
 
-            foreach { line s(1) e(1) s(2) e(2) type } $DIFF_INT($search_type,$i) { }
+            foreach { line s(1) e(1) s(2) e(2) type } $DIFF_INT($i,$search_type) { }
 
             if { $s(1) > $top } {
                 set high [ expr { $i - 1 } ]
@@ -9156,8 +10572,8 @@ proc ::Yadt::Find2_Diff { line_num search_type } {
     set i [ ::CmnTools::MaxN 1 [ ::CmnTools::MinN $i $DIFF_INT(count) ] ]
 
     if { $i > 0 && $i < $DIFF_INT(count) } {
-        set nexts1 [ lindex $DIFF_INT(scrdiff,[ expr { $i + 1 } ]) 1 ]
-        set e(1) [ lindex $DIFF_INT(scrdiff,$i) 2 ]
+        set nexts1 [ lindex $DIFF_INT([ expr { $i + 1 } ],scrdiff) 0 ]
+        set e(1) [ lindex $DIFF_INT($i,scrdiff) 1 ]
         if { $nexts1 - $top < $top - $e(1) } {
             incr i
         }
@@ -9172,6 +10588,8 @@ proc ::Yadt::Find3_Diff { line_num search_type } {
 
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::DIFF2RANGES
 
     set top $line_num
 
@@ -9180,8 +10598,16 @@ proc ::Yadt::Find3_Diff { line_num search_type } {
         { set diff_id [ expr { ($low + $high) / 2 } ] } {
 
             for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                switch -- $search_type {
+                    pdiff {
                 foreach [ list thisdiff($i) s($i) e($i) type($i) ] \
                     $DIFF_INT($diff_id,$i,$search_type) { }
+            }
+                    scrdiff {
+                        foreach [ list thisdiff($i) s($i) e($i) type($i) ] \
+                            $DIFF_INT($diff_id,$search_type) { }
+                    }
+                }
             }
 
             if { $s(1) > $top } {
@@ -9194,8 +10620,8 @@ proc ::Yadt::Find3_Diff { line_num search_type } {
     set diff_id [ ::CmnTools::MaxN 1 [ ::CmnTools::MinN $diff_id $DIFF_INT(count) ] ]
 
     if { $diff_id > 0 && $diff_id < $DIFF_INT(count) } {
-        set nexts1 [ lindex $DIFF_INT([ expr { $diff_id + 1 } ],1,scrdiff) 1 ]
-        set e(1) [ lindex $DIFF_INT($diff_id,1,scrdiff) 2 ]
+        set nexts1 [ lindex $DIFF_INT([ expr { $diff_id + 1 } ],scrdiff) 0 ]
+        set e(1) [ lindex $DIFF_INT($diff_id,scrdiff) 1 ]
         if { $nexts1 - $top < $top - $e(1) } {
             incr diff_id
         }
@@ -9206,9 +10632,16 @@ proc ::Yadt::Find3_Diff { line_num search_type } {
 
 #===============================================================================
 
-proc ::Yadt::Set_Diff_Indicator { value { relative 1 } { setpos 1 } } {
+proc ::Yadt::Set_Diff_Indicator { value { relative 1 } { setpos 1 } { value_type "" } } {
 
     variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::DIFF2
+    variable ::Yadt::DIFF3
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
+    variable ::Yadt::DIFF2RANGES
+    variable ::Yadt::RANGES2DIFF
 
     if { $value == "first" } {
         set value 1
@@ -9217,64 +10650,46 @@ proc ::Yadt::Set_Diff_Indicator { value { relative 1 } { setpos 1 } } {
 
     switch -- $DIFF_TYPE {
         2 {
-            ::Yadt::Set_Diff2_Indicator $value $relative $setpos
+            set num_diff [ llength $DIFF2(diff) ]
         }
         3 {
-            ::Yadt::Set_Diff3_Indicator $value $relative $setpos
+            switch -- $OPTIONS(merge_mode) {
+                normal {
+                    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+                }
+                expert {
+                    set num_diff [ llength [ array names RANGES ] ]
+                }
         }
     }
+}
 
-    ::Yadt::Focus_Active_Window
+    if { $num_diff == 0 } return
+
+    if { $value == "last" } {
+        set value $num_diff
+        set relative 0
+    }
+
+    ::Yadt::Current_Tag remove $DIFF_INT(pos)
+
+    if { $value_type == "normal" && \
+             $OPTIONS(merge_mode) == "expert" && \
+             $DIFF_TYPE == 3 } {
+        set value [ lindex $DIFF2RANGES($value) 0 ]
+    }
+
+    if { $relative } {
+        set DIFF_INT(pos) [ expr $DIFF_INT(pos) + $value ]
+    } else {
+        set DIFF_INT(pos) $value
+    }
+    set DIFF_INT(pos) [ ::CmnTools::MaxN $DIFF_INT(pos) 1 ]
+    set DIFF_INT(pos) [ ::CmnTools::MinN $DIFF_INT(pos) $num_diff ]
+
+    ::Yadt::Current_Tag add $DIFF_INT(pos)
+
     ::Yadt::Update_Widgets
-}
-
-#===============================================================================
-
-proc ::Yadt::Set_Diff2_Indicator { value { relative 1 } { setpos 1 } } {
-
-    variable ::Yadt::DIFF2
-    variable ::Yadt::DIFF_INT
-
-    set num_diff [ llength $DIFF2(diff) ]
-    if { $value == "last" } {
-        set value $num_diff
-        set relative 0
-    }
-    ::Yadt::Set_Tag $DIFF_INT(pos) difftag currtag
-    if { $relative } {
-        set DIFF_INT(pos) [ expr { $DIFF_INT(pos) + $value } ]
-    } else {
-        set DIFF_INT(pos) $value
-    }
-    set DIFF_INT(pos) [ ::CmnTools::MaxN $DIFF_INT(pos) 1 ]
-    set DIFF_INT(pos) [ ::CmnTools::MinN $DIFF_INT(pos) $num_diff ]
-    ::Yadt::Set_Tag $DIFF_INT(pos) currtag "" $setpos
-}
-
-#===============================================================================
-
-proc ::Yadt::Set_Diff3_Indicator { value { relative 1 } { setpos 1 } } {
-
-    variable ::Yadt::DIFF3
-    variable ::Yadt::DIFF_INT
-
-    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
-    if { $num_diff == 0 } {
-        return
-    }
-    if { $value == "last" } {
-        set value $num_diff
-        set relative 0
-    }
-    ::Yadt::Set_Tag $DIFF_INT(pos) difftag currtag
-    if { $relative } {
-        set DIFF_INT(pos) [ expr { $DIFF_INT(pos) + $value } ]
-    } else {
-        set DIFF_INT(pos) $value
-    }
-    set DIFF_INT(pos) [ ::CmnTools::MaxN $DIFF_INT(pos) 1 ]
-    set DIFF_INT(pos) [ ::CmnTools::MinN $DIFF_INT(pos) $num_diff ]
-    ::Yadt::Set_Tag $DIFF_INT(pos) currtag "" $setpos
 }
 
 #===============================================================================
@@ -9284,34 +10699,46 @@ proc ::Yadt::Goto_Conflict { value { setpos 1 } } {
     variable ::Yadt::DIFF3
     variable ::Yadt::DIFF_INT
 
-    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
-    if { $num_diff == 0 } {
-        return
-    }
-
     #Find next conflict
-    set found [ ::Yadt::Find_Conflict $value $num_diff ]
+    set found [ ::Yadt::Find_Conflict $value ]
 
     if { $found } {
-        ::Yadt::Set_Tag $DIFF_INT(pos) difftag currtag
-        set DIFF_INT(pos) $found
-        ::Yadt::Set_Tag $DIFF_INT(pos) currtag "" $setpos
+        ::Yadt::Set_Diff_Indicator $found 0 1 "normal"
         ::Yadt::Update_Widgets
     }
 }
 
 #===============================================================================
 
-proc ::Yadt::Find_Conflict { direction num_diff } {
+proc ::Yadt::Find_Conflict { direction } {
 
     variable ::Yadt::DIFF3
     variable ::Yadt::DIFF_INT
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
+    variable ::Yadt::RANGES2DIFF
+
+    set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+
+
+    switch -- $OPTIONS(merge_mode) {
+        normal {
+            set diff_id $DIFF_INT(pos)
+        }
+        expert {
+            set diff_id $RANGES2DIFF($DIFF_INT(pos))
+        }
+    }
+
+    if { $num_diff == 0 } {
+        return 0
+    }
 
     set found 0
 
     switch -- $direction {
         1 {
-            for { set i [ expr $DIFF_INT(pos) + 1 ] } { $i <= $num_diff } { incr i } {
+            for { set i [ expr $diff_id + 1 ] } { $i <= $num_diff } { incr i } {
                 if { $DIFF3($i,which_file) == 0 } {
                     set found $i
                     break
@@ -9319,7 +10746,7 @@ proc ::Yadt::Find_Conflict { direction num_diff } {
             }
         }
         -1 {
-            for { set i [ expr $DIFF_INT(pos) - 1 ] } { $i > 0 } { incr i -1 } {
+            for { set i [ expr $diff_id - 1 ] } { $i > 0 } { incr i -1 } {
                 if { $DIFF3($i,which_file) == 0 } {
                     set found $i
                     break
@@ -9340,19 +10767,25 @@ proc ::Yadt::Goto_Unresolved { value target { setpos 1 } } {
 
     variable ::Yadt::DIFF3
     variable ::Yadt::DIFF_INT
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
 
+    switch -- $OPTIONS(merge_mode) {
+        normal {
     set num_diff [ llength [ array names DIFF3 *,which_file ] ]
-    if { $num_diff == 0 } {
-        return
     }
+        expert {
+            set num_diff [ llength [ array names RANGES ] ]
+        }
+    }
+
+    if { $num_diff == 0 } return
 
     #Find next conflict
     set found [ ::Yadt::Find_Unresolved $value $target $num_diff ]
 
     if { $found } {
-        ::Yadt::Set_Tag $DIFF_INT(pos) difftag currtag
-        set DIFF_INT(pos) $found
-        ::Yadt::Set_Tag $DIFF_INT(pos) currtag "" $setpos
+        ::Yadt::Set_Diff_Indicator $found 0 1
         ::Yadt::Update_Widgets
     }
 }
@@ -9363,13 +10796,14 @@ proc ::Yadt::Find_Unresolved { direction target num_diff } {
 
     variable ::Yadt::DIFF3
     variable ::Yadt::DIFF_INT
+    variable ::Yadt::OPTIONS
 
     set found 0
 
     switch -- $direction {
         1 {
             for { set i [ expr $DIFF_INT(pos) + 1 ] } { $i <= $num_diff } { incr i } {
-                if { $DIFF_INT($i,$target,resolved) == 0 } {
+                if { $DIFF_INT($i,$target,$OPTIONS(merge_mode)_resolved) == 0 } {
                     set found $i
                     break
                 }
@@ -9377,7 +10811,7 @@ proc ::Yadt::Find_Unresolved { direction target num_diff } {
         }
         -1 {
             for { set i [ expr $DIFF_INT(pos) - 1 ] } { $i > 0 } { incr i -1 } {
-                if { $DIFF_INT($i,$target,resolved) == 0 } {
+                if { $DIFF_INT($i,$target,$OPTIONS(merge_mode)_resolved) == 0 } {
                     set found $i
                     break
                 }
@@ -9398,8 +10832,10 @@ proc ::Yadt::Update_Widgets {} {
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF3
     variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES
 
-    set pos $DIFF_INT(pos)
+    set diff_id $DIFF_INT(pos)
 
     switch -- $DIFF_TYPE {
         2 {
@@ -9407,19 +10843,25 @@ proc ::Yadt::Update_Widgets {} {
             ::Yadt::Update_Widgets2 $num_diff
         }
         3 {
+            switch -- $OPTIONS(merge_mode) {
+                normal {
             set num_diff [ llength [ array names DIFF3 *,which_file ] ]
+                }
+                expert {
+                    set num_diff [ llength [ array names RANGES ] ]
+                }
+            }
             ::Yadt::Update_Widgets3 $num_diff
         }
     }
 
-    ::Yadt::Update_Common_Widgets $pos $num_diff
+    ::Yadt::Update_Common_Widgets $diff_id $num_diff
 }
 
 #===============================================================================
 
 proc ::Yadt::Update_Widgets2 { num_diff } {
 
-    variable ::Yadt::OPTIONS
     variable ::Yadt::WDG_OPTIONS
     variable ::Yadt::WIDGETS
     variable ::Yadt::DIFF_INT
@@ -9427,26 +10869,31 @@ proc ::Yadt::Update_Widgets2 { num_diff } {
 
     $WIDGETS(tool_bar).ignore_blanks configure -state normal
 
+    set state disabled
     if  { $num_diff > 0 } {
-        if { [ regexp -- 1 $DIFF_INT(merge$DIFF_INT(pos)) ] && \
-                 $DIFF_INT(merge$DIFF_INT(pos)) != -1 } {
+
+        if { $DIFF_INT(pos) == 0 } {
+            set DIFF_INT(pos) 1
+        }
+
+        if { [ regexp -- 1 $DIFF_INT(normal_merge$DIFF_INT(pos)) ] && \
+                 $DIFF_INT(normal_merge$DIFF_INT(pos)) != -1 } {
             set WDG_OPTIONS(toggleA) 1
         } else { 
             set WDG_OPTIONS(toggleA) 0
         }
 
-        if { [ regexp -- 2 $DIFF_INT(merge$DIFF_INT(pos)) ] && \
-                 $DIFF_INT(merge$DIFF_INT(pos)) != -1 } {
+        if { [ regexp -- 2 $DIFF_INT(normal_merge$DIFF_INT(pos)) ] && \
+                 $DIFF_INT(normal_merge$DIFF_INT(pos)) != -1 } {
             set WDG_OPTIONS(toggleB) 1
         } else { 
             set WDG_OPTIONS(toggleB) 0
         }
-        $WIDGETS(tool_bar).choice_A configure -state normal
-        $WIDGETS(tool_bar).choice_B configure -state normal
-    } else {
-        $WIDGETS(tool_bar).choice_A configure -state disabled
-        $WIDGETS(tool_bar).choice_B configure -state disabled
+        set state normal
     }
+
+    $WIDGETS(tool_bar).choice_A configure -state $state
+    $WIDGETS(tool_bar).choice_B configure -state $state
 }
 
 #===============================================================================
@@ -9471,34 +10918,38 @@ proc ::Yadt::Update_Widgets3 { num_diff } {
                              $WIDGETS(tool_bar).choice3_B \
                              $WIDGETS(tool_bar).choice3_C ]
 
+    set choice_state disabled
+    set prev_unresolved_state disabled
+    set next_unresolved_state disabled
+    set mark_state disabled
+
     if  { $num_diff > 0 } {
-        # Enable Choice buttons
-        foreach choice_button $choice_buttons {
-            if { [ winfo exists $choice_button ] } {
-                $choice_button configure -state normal
-            }
+        set choice_state normal
+
+        if { $DIFF_INT(pos) == 0 } {
+            set DIFF_INT(pos) 1
         }
 
         # Setting merge chosen values
         for { set i $MERGE_START } { $i <= $DIFF_TYPE } { incr i } {
 
-            if { [ regexp -- 1 $DIFF_INT(merge$DIFF_INT(pos),$i) ] && \
-                     $DIFF_INT(merge$DIFF_INT(pos),$i) != -1 } {
+            if { [ regexp -- 1 $DIFF_INT($OPTIONS(merge_mode)_merge$DIFF_INT(pos),$i) ] && \
+                     $DIFF_INT($OPTIONS(merge_mode)_merge$DIFF_INT(pos),$i) != -1 } {
                 set WDG_OPTIONS(toggle3${i}A) 1
             } else { 
                 set WDG_OPTIONS(toggle3${i}A) 0
             }
-            if [ regexp -- 2 $DIFF_INT(merge$DIFF_INT(pos),$i) ] {
+            if [ regexp -- 2 $DIFF_INT($OPTIONS(merge_mode)_merge$DIFF_INT(pos),$i) ] {
                 set WDG_OPTIONS(toggle3${i}B) 1
             } else { 
                 set WDG_OPTIONS(toggle3${i}B) 0
             }
-            if [ regexp -- 3 $DIFF_INT(merge$DIFF_INT(pos),$i) ] {
+            if [ regexp -- 3 $DIFF_INT($OPTIONS(merge_mode)_merge$DIFF_INT(pos),$i) ] {
                 set WDG_OPTIONS(toggle3${i}C) 1
             } else { 
                 set WDG_OPTIONS(toggle3${i}C) 0
             }
-            set WDG_OPTIONS(resolve_status_$i) $DIFF_INT($DIFF_INT(pos),$i,resolved)
+            set WDG_OPTIONS(resolve_status_$i) $DIFF_INT($DIFF_INT(pos),$i,$OPTIONS(merge_mode)_resolved)
 
             if { $WDG_OPTIONS(resolve_status_$i) } {
                 set action -mark
@@ -9507,58 +10958,34 @@ proc ::Yadt::Update_Widgets3 { num_diff } {
             }
             ::Yadt::Mark_Resolve_Handle $i mark_resolved $action -current 0
 
-            if ![ ::Yadt::Find_Unresolved -1 $i $num_diff ] {
-                $WIDGETS(prev_unresolved_$i) configure -state disabled
-            } else {
-                $WIDGETS(prev_unresolved_$i) configure -state normal
+            if [ ::Yadt::Find_Unresolved -1 $i $num_diff ] {
+                set prev_unresolved_state normal
             }
-            if ![ ::Yadt::Find_Unresolved 1 $i $num_diff ] {
-                $WIDGETS(next_unresolved_$i) configure -state disabled
-            } else {
-                $WIDGETS(next_unresolved_$i) configure -state normal
+            if [ ::Yadt::Find_Unresolved 1 $i $num_diff ] {
+                set next_unresolved_state normal
             }
-            $WIDGETS(mark$i) configure -state normal
+            set mark_state normal
         }
-    } else {
-        # Disable choice buttons
+    }
+
+    # Choice buttons
         foreach choice_button $choice_buttons {
             if { [ winfo exists $choice_button ] } {
-                $choice_button configure -state disabled
+            $choice_button configure -state $choice_state
             }
         }
         
+    # Resolve/Mark buttons
         for { set i $MERGE_START } { $i <= $DIFF_TYPE } { incr i } {
-            $WIDGETS(prev_unresolved_$i) configure -state disabled
-            $WIDGETS(next_unresolved_$i) configure -state disabled
-            $WIDGETS(mark$i) configure -state disabled
-        }            
-
+        $WIDGETS(prev_unresolved_$i) configure -state $prev_unresolved_state
+        $WIDGETS(next_unresolved_$i) configure -state $next_unresolved_state
+        $WIDGETS(mark$i) configure -state $mark_state
     }
 }
 
 #===============================================================================
 
-proc ::Yadt::Update_Save_Buttons {} {
-
-    variable ::Yadt::OPTIONS
-    variable ::Yadt::WIDGETS
-
-    if { $OPTIONS(save_always_enabled) } return
-
-    if { $OPTIONS(preview_shown) } {
-        $WIDGETS(tool_bar).save configure -state normal
-        $WIDGETS(menu_file) entryconfigure $WIDGETS(menu_item,file,save) -state normal
-        $WIDGETS(menu_file) entryconfigure $WIDGETS(menu_item,file,save_exit) -state normal
-    } else {
-        $WIDGETS(tool_bar).save configure -state disabled
-        $WIDGETS(menu_file) entryconfigure $WIDGETS(menu_item,file,save) -state disabled
-        $WIDGETS(menu_file) entryconfigure $WIDGETS(menu_item,file,save_exit) -state disabled
-    }
-}
-
-#===============================================================================
-
-proc ::Yadt::Update_Common_Widgets { pos num_diff } {
+proc ::Yadt::Update_Common_Widgets { diff_id num_diff } {
 
     variable ::Yadt::WIDGETS
     variable ::Yadt::OPTIONS
@@ -9569,17 +10996,20 @@ proc ::Yadt::Update_Common_Widgets { pos num_diff } {
     variable ::Yadt::DIFF3
 
     # Status bar
-    ::Yadt::Status_Msg diffstatus "$pos of $num_diff "
+    switch -- $OPTIONS(merge_mode) {
+        normal {
+            set units "diffs"
+        }
+        expert {
+            set units "ranges"
+        }
+    }
+    ::Yadt::Status_Msg diffstatus "$units: $diff_id of $num_diff "
 
-    # Center button, combo box and more
+    # Center button, combo box and Map
+    ::Yadt::Update_Center_Map_Diff_Combo_State $diff_id $num_diff
+
     if { $num_diff > 0 } {
-        set merge_item_state "normal"
-
-        $WIDGETS(tool_bar).center_cur configure -state normal
-        set i [ expr { $pos - 1 } ]
-        $WIDGETS(diff_combo) current $i
-        $WIDGETS(diff_combo) selection clear
-
         if { $DIFF_TYPE == 3 } {
             for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
                 if [ ::Yadt::Check_Resolved -all $j "" $num_diff ] {
@@ -9602,25 +11032,92 @@ proc ::Yadt::Update_Common_Widgets { pos num_diff } {
                 }
             }
         }
-    } else {
-        set merge_item_state "disabled"
-
-        $WIDGETS(tool_bar).center_cur configure -state disabled
-        $WDG_OPTIONS(map_image) blank
-        $WIDGETS(diff_combo) configure -values {}
-        $WIDGETS(diff_combo) set ""
     }
 
-    ::Yadt::Update_Save_Buttons
+    ::Yadt::Update_Save_Buttons_State
+    ::Yadt::Update_Merge_Menu_State $num_diff
+    ::Yadt::Update_Navigation_Buttons_And_Menu $diff_id $num_diff
 
-    # Merge menu
+    # Conflict navigation buttons and menus
+    if { $DIFF_TYPE == 3 } {
+        ::Yadt::Update_Conflict_Navigation_Buttons_And_Menu
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Update_Center_Map_Diff_Combo_State { diff_id num_diff } {
+
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::WIDGETS
+    variable ::Yadt::WDG_OPTIONS
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::RANGES2DIFF
+
+    set state disabled
+    if { $num_diff > 0 } {
+        set state normal
+    }
+
+    $WIDGETS(tool_bar).center_cur configure -state $state
+
+    switch -- $state {
+        "disabled" {
+        $WDG_OPTIONS(map_image) blank
+        $WIDGETS(diff_combo) configure -values {}
+            $WIDGETS(diff_combo).e delete 0 end
+        }
+        "normal" {
+            if { $DIFF_TYPE == 3 && $OPTIONS(merge_mode) == "expert" } {
+                set diff_id $RANGES2DIFF($diff_id)
+    }
+            set i [ expr $diff_id - 1 ]
+            $WIDGETS(diff_combo) current $i
+            $WIDGETS(diff_combo) selection clear
+        }
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Update_Save_Buttons_State {} {
+
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::WIDGETS
+
+    if { $OPTIONS(save_always_enabled) } return
+
+    if { $OPTIONS(preview_shown) } {
+        $WIDGETS(tool_bar).save configure -state normal
+        $WIDGETS(menu_file) entryconfigure $WIDGETS(menu_item,file,save) -state normal
+        $WIDGETS(menu_file) entryconfigure $WIDGETS(menu_item,file,save_exit) -state normal
+    } else {
+        $WIDGETS(tool_bar).save configure -state disabled
+        $WIDGETS(menu_file) entryconfigure $WIDGETS(menu_item,file,save) -state disabled
+        $WIDGETS(menu_file) entryconfigure $WIDGETS(menu_item,file,save_exit) -state disabled
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Update_Merge_Menu_State { num_diff } {
+
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::WIDGETS
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::MERGE_START
+
+    set merge_item_state disabled
+    if { $num_diff > 0 } {
+        set merge_item_state "normal"
+    }
+
     for { set i $MERGE_START } { $i <= $DIFF_TYPE } { incr i } {
         set num_elem [ $WIDGETS(menu_merge$i) index end ]
         for { set j 1 } { $j <= $num_elem } { incr j } {
-            if { [ $WIDGETS(menu_merge$i) type $j ] != "separator" } {
+            if { [ $WIDGETS(menu_merge$i) type $j ] == "separator" } continue
                 $WIDGETS(menu_merge$i) entryconfigure $j -state $merge_item_state
             }
-        }
 
         if { $OPTIONS(preview_shown) } {
             $WIDGETS(menu_merge$i) entryconfigure $WIDGETS(menu_item,merge$i,show_merge) -label "Hide Merge Window"
@@ -9630,9 +11127,15 @@ proc ::Yadt::Update_Common_Widgets { pos num_diff } {
             set WIDGETS(menu_item,merge$i,show_merge) "Show Merge Window"
         }
     }
+}
 
-    # Navigation buttons and menu
-    if { $pos <= 1 } {
+#===============================================================================
+
+proc ::Yadt::Update_Navigation_Buttons_And_Menu { diff_id num_diff } {
+
+    variable ::Yadt::WIDGETS
+
+    if { $diff_id <= 1 } {
         $WIDGETS(move_first) configure -state disabled
         $WIDGETS(move_prev)  configure -state disabled
         $WIDGETS(menu_view)  entryconfigure $WIDGETS(menu_item,view,first_diff) -state disabled
@@ -9648,7 +11151,7 @@ proc ::Yadt::Update_Common_Widgets { pos num_diff } {
         $WIDGETS(popup_menu) entryconfigure $WIDGETS(popup_item,prev_diff)  -state normal
     }
 
-    if { $pos >= $num_diff } {
+    if { $diff_id >= $num_diff } {
         $WIDGETS(move_next)  configure -state disabled
         $WIDGETS(move_last)  configure -state disabled
         $WIDGETS(menu_view)  entryconfigure $WIDGETS(menu_item,view,last_diff) -state disabled
@@ -9663,28 +11166,31 @@ proc ::Yadt::Update_Common_Widgets { pos num_diff } {
         $WIDGETS(popup_menu) entryconfigure $WIDGETS(popup_item,last_diff) -state normal
         $WIDGETS(popup_menu) entryconfigure $WIDGETS(popup_item,next_diff) -state normal
     }
+}
 
-    # Conflict navigation buttons and menus
-    if { $DIFF_TYPE == 3 } {
-        if ![ ::Yadt::Find_Conflict 1 $num_diff ] {
-            $WIDGETS(tool_bar).move_next_confl configure -state disabled
-            $WIDGETS(menu_view)  entryconfigure $WIDGETS(menu_item,view,next_conflict) -state disabled
-            $WIDGETS(popup_menu) entryconfigure $WIDGETS(popup_item,next_conflict) -state disabled
-        } else {
-            $WIDGETS(tool_bar).move_next_confl configure -state normal
-            $WIDGETS(menu_view)  entryconfigure $WIDGETS(menu_item,view,next_conflict) -state normal
-            $WIDGETS(popup_menu) entryconfigure $WIDGETS(popup_item,next_conflict) -state normal
+#===============================================================================
+
+proc ::Yadt::Update_Conflict_Navigation_Buttons_And_Menu {} {
+
+    variable ::Yadt::WIDGETS
+
+    set next_conflict_state disabled
+    set prev_conflict_state disabled
+
+    if [ ::Yadt::Find_Conflict 1 ] {
+        set next_conflict_state normal
         }
-        if ![ ::Yadt::Find_Conflict -1 $num_diff ] {
-            $WIDGETS(tool_bar).move_prev_confl configure -state disabled
-            $WIDGETS(menu_view) entryconfigure $WIDGETS(menu_item,view,prev_conflict) -state disabled
-            $WIDGETS(popup_menu) entryconfigure $WIDGETS(popup_item,prev_conflict) -state disabled
-        } else {
-            $WIDGETS(tool_bar).move_prev_confl configure -state normal
-            $WIDGETS(menu_view) entryconfigure $WIDGETS(menu_item,view,prev_conflict) -state normal
-            $WIDGETS(popup_menu) entryconfigure $WIDGETS(popup_item,prev_conflict) -state normal
-        }
+    if [ ::Yadt::Find_Conflict -1 ] {
+        set prev_conflict_state normal
     }
+
+    $WIDGETS(tool_bar).move_next_confl configure -state $next_conflict_state
+    $WIDGETS(menu_view)  entryconfigure $WIDGETS(menu_item,view,next_conflict) -state $next_conflict_state
+    $WIDGETS(popup_menu) entryconfigure $WIDGETS(popup_item,next_conflict) -state $next_conflict_state
+
+    $WIDGETS(tool_bar).move_prev_confl configure -state $prev_conflict_state
+    $WIDGETS(menu_view) entryconfigure $WIDGETS(menu_item,view,prev_conflict) -state $prev_conflict_state
+    $WIDGETS(popup_menu) entryconfigure $WIDGETS(popup_item,prev_conflict) -state $prev_conflict_state
 }
 
 #===============================================================================
@@ -9782,14 +11288,24 @@ proc ::Yadt::Show_Preferences {} {
     # Geometry label
     label $wdg.g_preview -textvariable ::Yadt::TMP_OPTIONS(geometry_label) -bd 2 -relief groove -height 2
     pack $wdg.g_preview -fill x -expand 0 -side top -pady 2 -padx 2
-    ::Yadt::Update_Geometry_Label
+
+    frame $wdg.layout_mode -relief flat -bd 0
+    pack $wdg.layout_mode -side top -fill both -expand 1 -padx 0 -pady 0
 
     # Vertical/Horizontal Layout
-    TitleFrame $wdg.diff -text $PREF(diff_layout) -relief groove -bd 2 -side left
-    pack $wdg.diff -side top -fill both -expand 1 -padx 2 -pady 2
+    TitleFrame $wdg.layout_mode.diff -text $PREF(diff_layout) -relief groove -bd 2 -side center
+    pack $wdg.layout_mode.diff -side left -fill both -expand 1 -padx 2 -pady 2
 
     foreach param_value [ list vertical horizontal ] {
-        ::Yadt::Pref_Radio_Button [ $wdg.diff getframe ] diff_layout $param_value
+        ::Yadt::Pref_Radio_Button [ $wdg.layout_mode.diff getframe ] diff_layout $param_value
+    }
+
+    # Merge mode: normal or expert
+    TitleFrame $wdg.layout_mode.mmode -text $PREF(merge_mode) -relief groove -bd 2 -side center
+    pack $wdg.layout_mode.mmode -side left -fill both -expand 1 -padx 2 -pady 2
+
+    foreach param_value [ list normal expert ] {
+        ::Yadt::Pref_Radio_Button [ $wdg.layout_mode.mmode getframe ] merge_mode $param_value
     }
 
     # Display Parameters
@@ -9833,6 +11349,14 @@ proc ::Yadt::Show_Preferences {} {
          ::Yadt::Pref_Check_Button [ $wdg.text getframe ] $param left
     }
 
+    # File translation Parameters
+    TitleFrame $wdg.translation -text "File end of line (EOL) translation (diffs recalculation required)" -relief groove -bd 2 -side left
+    pack $wdg.translation -side top -fill both -expand 1 -padx 2 -pady 2
+
+    foreach param_value [ list windows unix auto ] {
+        ::Yadt::Pref_Radio_Button [ $wdg.translation getframe ] translation $param_value -state normal
+    }
+
     update
     set w [ winfo reqwidth $wdg ]
     set h [ winfo reqheight $wdg ]
@@ -9841,6 +11365,58 @@ proc ::Yadt::Show_Preferences {} {
     wm deiconify $wdg
 
     ::Yadt::Main_Window_Configure_Event
+}
+
+#===============================================================================
+
+proc ::Yadt::Update_Apply_Pref_Button {} {
+
+    variable ::Yadt::TMP_OPTIONS
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::WIDGETS
+    variable ::Yadt::DIFF_TYPE
+
+    if { ![ info exists WIDGETS(pref) ] || \
+             ![ winfo exists $WIDGETS(pref).controls.apply ] } {
+        return
+    }
+
+    set state disabled
+
+    foreach key [ array names TMP_OPTIONS ] {
+
+        if ![ info exists OPTIONS($key) ] continue
+
+        if { $key == "geometry" } {
+
+            set tmp_geometry $TMP_OPTIONS(geometry,width)x$TMP_OPTIONS(geometry,height)
+            if { $TMP_OPTIONS(geometry,x) >= 0 } {
+                append tmp_geometry "+"
+            }
+            append tmp_geometry "$TMP_OPTIONS(geometry,x)"
+            if { $TMP_OPTIONS(geometry,y) >= 0 } {
+                append tmp_geometry "+"
+            }
+            append tmp_geometry "$TMP_OPTIONS(geometry,y)"
+
+            if { $tmp_geometry != $OPTIONS(geometry) } {
+                set state normal
+                continue
+            }
+        }
+
+        if { $TMP_OPTIONS($key) != $OPTIONS($key) } {
+            if { $DIFF_TYPE == 2 } {
+                if { $key == "merge_mode" || $key == "automerge" } {
+                    continue
+                }
+            }
+            set state normal
+            break
+        }
+    }
+
+    $WIDGETS(pref).controls.apply configure -state $state
 }
 
 #===============================================================================
@@ -9889,7 +11465,8 @@ proc ::Yadt::Pref_Spin_Create { s_frame param } {
         -increment 1 \
         -validate all \
         -validatecommand "::Yadt::Spin_Validate %W %V %P" \
-        -textvariable ::Yadt::TMP_OPTIONS(geometry,$param)
+        -textvariable ::Yadt::TMP_OPTIONS(geometry,$param) \
+        -command ::Yadt::Update_Apply_Pref_Button
     pack $s_frame.${param}_spin -side left -pady 2 -padx 2
 
     bind $s_frame.${param}_spin <Return> "
@@ -9916,6 +11493,8 @@ proc ::Yadt::Update_Geometry_Label {} {
     append TMP_OPTIONS(geometry) "$TMP_OPTIONS(geometry,y)"
 
     set TMP_OPTIONS(geometry_label) "Current Geometry: $TMP_OPTIONS(geometry)"
+
+    ::Yadt::Update_Apply_Pref_Button
 }
 
 #===============================================================================
@@ -9965,25 +11544,30 @@ proc ::Yadt::Spin_Validate { spin_wdg v_event value } {
 
 #===============================================================================
 
-proc ::Yadt::Pref_Radio_Button { t_frame param value } {
+proc ::Yadt::Pref_Radio_Button { t_frame param value args } {
 
     variable ::Yadt::OPTIONS
     variable ::Yadt::TMP_OPTIONS
+
+    set state [ ::CmnTools::Get_Arg -state args -default "" ]
 
     set p_frame [ frame $t_frame.f_${param}_$value ]
     pack $p_frame -side left -fill both -expand 1
 
     set TMP_OPTIONS($param) $OPTIONS($param)
 
-    set state normal
-    if { $OPTIONS(external_call) } {
-        set state disabled
+    if { $state == "" } {
+        set state normal
+        if { $OPTIONS(external_call) } {
+            set state disabled
+        }
     }
     ::ttk::radiobutton $p_frame.${param}_$value \
         -text [ string toupper $value 0 0 ] \
         -value $value \
         -state $state \
-        -variable ::Yadt::TMP_OPTIONS($param)
+        -variable ::Yadt::TMP_OPTIONS($param) \
+        -command ::Yadt::Update_Apply_Pref_Button
 
     pack $p_frame.${param}_$value -side left -fill x -expand 1
 }
@@ -10010,7 +11594,8 @@ proc ::Yadt::Pref_Check_Button { t_frame param { side top } } {
         -onvalue 1 \
         -offvalue 0 \
         -state $state \
-        -variable ::Yadt::TMP_OPTIONS($param)
+        -variable ::Yadt::TMP_OPTIONS($param) \
+        -command ::Yadt::Update_Apply_Pref_Button
     pack $t_frame.f_$param.ch_$param -side left -fill x -expand 0
 }
 
@@ -10032,6 +11617,8 @@ proc ::Yadt::Restore_Default_Preferences {} {
             }
         }
     }
+
+    ::Yadt::Update_Apply_Pref_Button
 }
 
 #===============================================================================
@@ -10046,6 +11633,7 @@ proc ::Yadt::Init_Pref_Labels {} {
     set PREF(ignore_blanks) "Ignore blanks by default"
     set PREF(geometry) "Geometry and position of the $WDG_OPTIONS(yadt_title) window"
     set PREF(diff_layout) {Layout of diff text widgets}
+    set PREF(merge_mode) {3-way Merge Mode}
     set PREF(preview_shown) {Show merge preview window}
     set PREF(syncscroll) {Synchronize scrollbars}
     set PREF(show_diff_lines) {Show line by line comparison window}
@@ -10056,6 +11644,7 @@ proc ::Yadt::Init_Pref_Labels {} {
     set PREF(taginfo) {Highlight change bars}
     set PREF(tagln) {Highlight line numbers}
     set PREF(tagtext) {Highlight file contents}
+    set PREF(translation) {File end of line translation}
 }
 
 #===============================================================================
@@ -10074,9 +11663,9 @@ proc ::Yadt::Save_Preferences {} {
     }
 
     # Here 'modified' variable means differrence not from rc file,
-    # but from default Yadt settings
+    # but from default YaDT settings
     # Therefore, rc file will be deleted only in case 
-    # when all current parameters are equal to Yadt internal defaults
+    # when all current parameters are equal to YaDT internal defaults
     set modified 0
 
     set fd [ open $WDG_OPTIONS(rcfile) w ]
@@ -10158,8 +11747,52 @@ proc ::Yadt::Apply_Preferences {} {
     variable ::Yadt::TMP_OPTIONS
     variable ::Yadt::WIDGETS
     variable ::Yadt::DIFF_INT
+    variable ::Yadt::DIFF_TYPE
 
-    foreach key [ array names TMP_OPTIONS ] {
+    set delayed_cmds {}
+
+    set keys [ array names TMP_OPTIONS ]
+
+    array set special_keys {
+        ignore_blanks ::Yadt::Recompute_Diff_On_Bs_Change
+        merge_mode    ::Yadt::Toggle_Merge_Mode
+        automerge     ::Yadt::Auto_Merge3
+    }
+
+    set rediff 0
+    set idx [ lsearch $keys ignore_blanks ]
+    if { $idx != -1 } {
+        if { $OPTIONS(ignore_blanks) != $TMP_OPTIONS(ignore_blanks) } {
+            set rediff 1
+            set OPTIONS(ignore_blanks) $TMP_OPTIONS(ignore_blanks)
+            set keys [ lreplace $keys $idx $idx ]
+            lappend delayed_cmds $special_keys(ignore_blanks)
+        }
+    }
+
+    if { $DIFF_TYPE == 3 } {
+        set idx [ lsearch $keys merge_mode ]
+        if { $idx != -1 } {
+            if { $OPTIONS(merge_mode) != $TMP_OPTIONS(merge_mode) } {
+                set OPTIONS(merge_mode) $TMP_OPTIONS(merge_mode)
+                set keys [ lreplace $keys $idx $idx ]
+                lappend delayed_cmds $special_keys(merge_mode)
+            }
+        }
+    }
+
+    set idx [ lsearch $keys automerge ]
+    if { $idx != -1 } {
+        if { $OPTIONS(automerge) != $TMP_OPTIONS(automerge) } {
+            set OPTIONS(automerge) $TMP_OPTIONS(automerge)
+            if { $rediff == 0 && $OPTIONS(automerge) } {
+                lappend delayed_cmds $special_keys(automerge)
+            }
+        }
+    }
+
+    foreach key $keys {
+
         # TMP_OPTIONS contain several additional options like (geometry,width)
         # so we have to skip them
         if ![ info exists OPTIONS($key) ] continue
@@ -10231,6 +11864,9 @@ proc ::Yadt::Apply_Preferences {} {
                         wm deiconify $WIDGETS(window_name)
                     }
                 }
+
+                ::Yadt::Update_Geometry_Label
+                set OPTIONS($key) $TMP_OPTIONS($key)
             }
             diff_layout {
                 ::Yadt::Change_Layout
@@ -10250,25 +11886,34 @@ proc ::Yadt::Apply_Preferences {} {
             autocenter {
                 if $OPTIONS($key) ::Yadt::Diff_Center
             }
-            automerge {
-                if $OPTIONS($key) ::Yadt::Auto_Merge3
-            }
             show_tooltips {
                 ::Yadt::Configure_Tooltips
             }
             taginfo -
             tagln -
             tagtext {
-                set current_pos $DIFF_INT(pos)
-                set merges [ ::Yadt::Save_Current_Merges ]
-                ::Yadt::Mark_Diffs
-                ::Yadt::Apply_Merges $merges $current_pos
+                ::Yadt::Clear_Mark_Diffs
+                ::Yadt::Set_All_Tags
+                ::Yadt::Set_Diff_Indicator $DIFF_INT(pos) 0 1
             }
             ignore_blanks {
-                ::Yadt::Recompute_Diff_On_Bs_Change
+            }
+            merge_mode {
+            }
+            automerge {
+            }
+            translation {
+                ::Yadt::Start_New_Diff_Wrapper
+                set TMP_OPTIONS(translation) $OPTIONS(translation)
             }
         }
     }
+
+    foreach delayed_cmd $delayed_cmds {
+        eval $delayed_cmd
+    }
+
+    after idle ::Yadt::Update_Apply_Pref_Button
 }
 
 #===============================================================================
@@ -10298,16 +11943,20 @@ Preferences are organized in several groups: <cmp>Geometry</cmp>, <cmp>Position<
 
 <hdr>Geometry and Position</hdr>
 
-This set of widgets define the size and yadt window position on the screen. It can be very precisely customized or set to the default value.
+This set of widgets define the size and YaDT window position on the screen. It can be very precisely customized or set to the default value.
 
 <hdr>Layout</hdr>
 
 This defines the layout of the text widgets. Can be vertical or horizontal. The default value is vertical.
 
+<hdr>3-way Merge Mode</hdr>
+
+This defines the 3-way merge mode. In Normal mode, it is possible to merge differences one by one. In Expert mode, YaDT tries to split each difference in a set of smaller ranges to merge which.
+
 <hdr>Display</hdr>
 
 <bld>$PREF(ignore_blanks)</bld>
-If set, Yadt by default will ignore blanks while finding files differences.
+If set, YaDT by default will ignore blanks while finding files differences.
 
 <bld>$PREF(preview_shown)</bld>
 If set, the merge preview window will be shown even if it was not requested in the command line.
@@ -10333,7 +11982,7 @@ If set, whenever a new diff record becomes the current diff record (for example,
 If unset, no automatic scrolling will occur.
 
 <bld>$PREF(automerge)</bld>
-This option will take effect only while comparing three files with merge. If set, yadt will try to automatically resolve any conflicts if any and put them in merge file. It is actually not recommended to save this option in the file as it might be not you want yadt to do every next start.
+This option will take effect only while comparing three files with merge. If set, YaDT will try to automatically resolve any conflicts if any and put them in merge file. It is actually not recommended to save this option in the file as it might be not you want YaDT to do every next start.
 
 <hdr>Text Markup</hdr>
 
@@ -10348,6 +11997,11 @@ If not set, line numbers won't be highlighted.
 <bld>$PREF(tagtext)</bld>
 If set, the file contents will be highlighted.
 If not set, the file contents won't be highlighted.
+
+<hdr>File end of line translation</hdr>
+
+This option defines how to treat line ending, or end of line (EOL) in files being compared.
+By default, this option is set to platform specific value, but sometimes, it is needed to change it, f.i. cwhile omparing windows-styled files from unix-like systems. Differences will be recalculated for changes to take effect.
 "
 
 
@@ -10496,7 +12150,6 @@ There are a number of ways you can call yadt:
         --initline LINE
         --chdir DIR
         --diff-cmd "diff PATH"
-        --diff3-cmd "diff3 PATH"
         --cvs-cmd "cvs PATH"
         --git-cmd "git PATH"
         --d CVSROOT
@@ -10506,6 +12159,8 @@ There are a number of ways you can call yadt:
         --config CONFIG_FILE
         --norc
         --auto-merge
+        --translation TRANSLATION
+        --merge_mode MERGE_MODE
 </cmd>
 
 <hdr>Description</hdr>
@@ -10530,7 +12185,7 @@ Compare 3 files:
         <cmd>
         yadt FILE</cmd> - (same as -r)
 
-        Note: in this case, by default yadt will compare FILE with the "Working revision", not with HEAD.
+        Note: in this case, by default YaDT will compare FILE with the "Working revision", not with HEAD.
         To compare with HEAD, use
         <cmd>
         yadt -rHEAD FILE</cmd>
@@ -10557,7 +12212,7 @@ Compare 3 files:
 
 <bld>Other options:</bld>
         <cmd>
-        --merge MERGE_FILE</cmd> - will add merge preview window in yadt layout. Note, if this option is omitted, it is possible to show merge preview window from yadt menu.
+        --merge MERGE_FILE</cmd> - will add merge preview window in YaDT layout. Note, if this option is omitted, it is possible to show merge preview window from YaDT menu.
 
         <itl>Examples:</itl>
         <cmd>
@@ -10565,10 +12220,9 @@ Compare 3 files:
         yadt OLDFILE YOURFILE MYFILE --merge MYFILE_MERGE
         yadt --diff3 FILE --merge FILE_MERGE
         </cmd>
-        <cmd>--initline LINE</cmd> - specifies the line number where to go when yadt is started
+        <cmd>--initline LINE</cmd> - specifies the line number where to go when YaDT is started
         <cmd>--chdir DIR</cmd> - specifies the directory where files you want to compare are located. If files are located in current directory, there is no need in this option.
         <cmd>--diff-cmd "diff PATH"</cmd> - specifies other diff utility path to use instead of default.
-        <cmd>--diff3-cmd "diff3 PATH"</cmd> - specifies other diff3 utility path to use instead of default.
         <cmd>--cvs-cmd "cvs PATH"</cmd> - specifies other cvs utility path to use instead of default.
         <cmd>--git-cmd "git PATH"</cmd> - specifies other git utility path to use instead of default.
         <cmd>--d CVSROOT</cmd> - specifies cvsroot if needed.
@@ -10584,16 +12238,18 @@ Compare 3 files:
         cvs -d CVSROOT co CVSMODULE
         </cmd>
 
-        <cmd>--ge[ometry] WIDTHxHEIGHT</cmd> - specify own yadt window geometry.
+        <cmd>--ge[ometry] WIDTHxHEIGHT</cmd> - specify own YaDT window geometry.
 
         <itl>Example:</itl>
         <cmd>
         yadt FILE --geometry 800x600
         </cmd>
-        <cmd>--ho[rizontal] | --ve[rtical]</cmd> - by default yadt has vertical layout. However, it is possible to place comparing files one under another by specifying --ho[rizontal] in command line. Also, it is possible to change the layout from menu.
-        <cmd>--config</cmd> - specify alternative path to the yadt config file.
-        <cmd>--norc</cmd> - forcely do not use yadt config file.
+        <cmd>--ho[rizontal] | --ve[rtical]</cmd> - by default YaDT has vertical layout. However, it is possible to place comparing files one under another by specifying --ho[rizontal] in command line. Also, it is possible to change the layout from menu.
+        <cmd>--config</cmd> - specify alternative path to the YaDT config file.
+        <cmd>--norc</cmd> - forcely do not use YaDT config file.
         <cmd>--auto-merge</cmd> - for 3-way merge, try to resolve conflicts automatically, if any.
+        <cmd>--translation TRANSLATION</cmd> - defines the way of handling line endig (EOL) of files being compared. Acceptable values are "windows", "unix" and "auto". By default, platform specific value is used, that is when run under Windows - "windows", under Unix-like systems - "unix".
+        <cmd>--merge_mode MERGE_MODE</cmd> - for 3-way merge, could be either "normal", which is default or "expert". In "normal" mode, merge is performed as usual, diff by diff. In "expert" mode, YaDT tries to split each diff in a set of smaller ranges to merge which.
 
         <itl>Example:</itl>
         <cmd>
@@ -10604,8 +12260,8 @@ Compare 3 files:
 
 <hdr>Layout</hdr>
 
-        The top row contains yadt menu. Below that is a toolbar which contains navigation and merge selection tools. The most part of yadt is occupied with text widget elements. Depending on how many files are being compared, there are two or three text widgets. By default these widgets are splitted vertically. However, it is possible to change vertical layout to horizontal and back by executing menu item "View - Layout".
-        If yadt was called with --merge option or menu item "Merge - Show Merge Window" was called, a merge preview window is shown below text widgets.
+        The top row contains YaDT menu. Below that is a toolbar which contains navigation and merge selection tools. The most part of YaDT is occupied with text widget elements. Depending on how many files are being compared, there are two or three text widgets. By default these widgets are splitted vertically. However, it is possible to change vertical layout to horizontal and back by executing menu item "View - Layout".
+        If YaDT was called with --merge option or menu item "Merge - Show Merge Window" was called, a merge preview window is shown below text widgets.
 
         If menu item "View - Show Line Comparison" is set, at the bottom there is two or three lines window, which shows the "current line" from text widgets, one on top of the other. The "current line" is defined by the line that has the blinking insertion cursor, which can be set by merely clicking on any line in the display. This window may be hidden if the menu item "View - Show Line Comparison" is deselected.
 
@@ -10674,7 +12330,7 @@ There is a possibility to search for text in any text widget. Button <img>findIm
 
         <img>unmarkImage</img> - Unmark conflict as resolved
 
-        If yadt was called without --merge option, it is possible to display merge preview by executing menu item "Merge - <img>previewImage</img> Show Merge Window".
+        If YaDT was called without --merge option, it is possible to display merge preview by executing menu item "Merge - <img>previewImage</img> Show Merge Window".
 
 <bld>Choosing merge way</bld>
 
@@ -10868,8 +12524,7 @@ proc ::Yadt::Insert_Text { widget txt } {
     set t $txt
 
     while { [ regexp -indices {<([^@>]*)>} $t match inds ] == 1 } {
-        set start [ lindex $inds 0 ]
-        set end [ lindex $inds 1 ]
+        lassign $inds start end
         set keyword [ string range $t $start $end ]
         set oldend [ $widget index end ]
 
