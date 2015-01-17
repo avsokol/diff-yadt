@@ -9254,16 +9254,24 @@ proc ::Yadt::Main_Window_Configure_Event { { wdg "" } } {
 
 proc ::Yadt::Bind_Events {} {
 
+    global tcl_platform
+    
     variable ::Yadt::OPTIONS
     variable ::Yadt::WDG_OPTIONS
     variable ::Yadt::WIDGETS
     variable ::Yadt::DIFF_TYPE
 
     # Popup menu
+    set key_event <Button-3>
+    if { $tcl_platform(platform) == "unix" &&\
+	 $tcl_platform(os) == "Darwin" } {
+	set key_event <Control-Button-1>
+    }
+
     foreach wdg [ concat [ ::Yadt::Get_Diff_Wdg_List ] \
                       [ ::Yadt::Get_Merge_Wdg_List ] \
                       $WIDGETS(mapCanvas) ] {
-        bind $wdg <Button-3> { 
+        bind $wdg $key_event { 
             ::Yadt:::Show_Popup_Menu %X %Y 
         }
     }
@@ -9344,7 +9352,7 @@ proc ::Yadt::Bind_Events {} {
 
     if { $DIFF_TYPE == 3 } {
         foreach wdg [ concat $WIDGETS(diff_combo) $WIDGETS(tool_bar) [ winfo children $WIDGETS(tool_bar) ] ] {
-            bind $wdg <Button-3> { 
+            bind $wdg $key_event { 
                 ::Yadt:::Show_Merge_Mode_Popup_Menu %X %Y 
             }
         }
