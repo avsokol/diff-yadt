@@ -44,6 +44,7 @@ proc ::YadtCvs::Detect_VCS { dir } {
         set git_dir [ file join $dir .git ]
         if { [ file exists $git_dir ] && [ file isdirectory $git_dir ] } {
             set OPTIONS(vcs) "git"
+            set OPTIONS(git_abs_dir) $dir
             return
         }
         set dir [ file dirname $dir ]

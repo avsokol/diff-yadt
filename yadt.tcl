@@ -473,15 +473,20 @@ proc ::Yadt::Prepare_CVS_Cmd { filename index rev } {
 #===============================================================================
 
 proc ::Yadt::Prepare_GIT_Cmd { filename index rev } {
-    
+
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::VCS_CMD
+    variable ::Yadt::OPTIONS
 
     if { $rev == "" } {
         set rev "HEAD"
     }
 
     set DIFF_FILES(label,$index) "$filename (CVS r$rev)"
+
+    set abs_file [ file normalize $filename ]
+    set n_file [ file nativename [ file normalize [ file join $OPTIONS(git_abs_dir) $abs_file  ] ] ]
+    set filename [ string range $n_file [ expr [ string length $OPTIONS(git_abs_dir) ] + 1 ] end ]
 
     set vcs_cmd [ list $VCS_CMD show $rev:$filename ]
 
