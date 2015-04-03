@@ -18,7 +18,12 @@ proc ::MakeYadt::Get_Common_Files_List { syren_src_dir } {
 
     set files_list [ list \
                          common_tools.tcl \
-                         ya_lcs.tcl \
+                         yadt_cvs.tcl \
+                         yadt_diff2.tcl \
+                         yadt_diff3.tcl \
+                         yadt_images.tcl \
+                         yadt_lcs.tcl \
+                         yadt_paned.tcl \
                          yadt.tcl \
                          tcllib1.18/cmdline/pkgIndex.tcl \
                          tcllib1.18/cmdline/cmdline.tcl \
