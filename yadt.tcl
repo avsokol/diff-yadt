@@ -360,6 +360,7 @@ proc ::Yadt::Prepare_File { filename index { chdir "" } } {
     }
 
     set DIFF_FILES(label,$index) "$filename"
+    set DIFF_FILES(orig_path,$index) "$filename"
     set DIFF_FILES(path,$index) "$filename"
     set DIFF_FILES(full_path,$index) "[ file join [ pwd ] $filename ]"
     set DIFF_FILES(tmp,$index) 0
@@ -524,11 +525,8 @@ proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
     # Note, that for cvs and diff3 (DIFF_TYPE =3) we always use -file for output_file_content_to as
     # it is not possible to use "cvs diff" for comparing 3 revisions
 
-    set output_file_content_to -variable
-    if { !$OPTIONS(use_cvs_diff) } {
-        set output_file_content_to -file
-    }
-    if { $OPTIONS(vcs) == "cvs" && $DIFF_TYPE == 2 && $OPTIONS(use_cvs_diff) } {
+    set output_file_content_to -file
+    if { $DIFF_TYPE == 2 && $OPTIONS(use_cvs_diff) && $OPTIONS(vcs) == "cvs" } {
         set output_file_content_to -variable
     }
 
@@ -1065,10 +1063,11 @@ proc ::Yadt::Parse_Args {} {
                 set WDG_OPTIONS(show_diff_lines,is_set) 1
 
                 incr argindex
-                set DIFF_FILES(merge1) [ lindex $argv $argindex ]
+                set DIFF_FILES(merge1) [ string trim [ lindex $argv $argindex ] ]
                 if { $DIFF_FILES(merge1) == "" } {
                     return -code $ERROR_CODES(argerror) "Missed file name for <$arg> argument."
                 }
+                set DIFF_FILES(merge1) [ file join [ pwd ] $DIFF_FILES(merge1) ]
             }
             "^--merge2$" {
                 set OPTIONS(preview_shown) 1
@@ -1077,10 +1076,11 @@ proc ::Yadt::Parse_Args {} {
                 set WDG_OPTIONS(show_diff_lines,is_set) 1
 
                 incr argindex
-                set DIFF_FILES(merge2) [ lindex $argv $argindex ]
+                set DIFF_FILES(merge2) [ string trim [ lindex $argv $argindex ] ]
                 if { $DIFF_FILES(merge2) == "" } {
                     return -code $ERROR_CODES(argerror) "Missed file name for <$arg> argument."
                 }
+                set DIFF_FILES(merge2) [ file join [ pwd ] $DIFF_FILES(merge2) ]
             }
             "^--merge_mode$" {
                 incr argindex 
@@ -1656,19 +1656,13 @@ proc ::Yadt::Update_Wm_Title {} {
     variable ::Yadt::WDG_OPTIONS
     variable ::Yadt::WIDGETS
 
-    switch -- $DIFF_TYPE {
-        2 {
-            set WDG_OPTIONS(yadt_rev_title) ": [ file tail $DIFF_FILES(label,1) ] vs.\
-                [ file tail $DIFF_FILES(label,2) ]"
-        }
-        3 {
-            set WDG_OPTIONS(yadt_rev_title) ": [ file tail $DIFF_FILES(label,1) ] vs.\
-                [ file tail $DIFF_FILES(label,2) ] vs.\
-                [ file tail $DIFF_FILES(label,3) ]"
-        }
+    set yadt_rev_title ": [ file tail $DIFF_FILES(label,1) ] vs. [ file tail $DIFF_FILES(label,2) ]"
+
+    if { $DIFF_TYPE == 3 } {
+        append yadt_rev_title  " vs. [ file tail $DIFF_FILES(label,3) ]"
     }
 
-    wm title $WIDGETS(window_name) "$WDG_OPTIONS(yadt_title) $CVS_REVISION $WDG_OPTIONS(yadt_rev_title)"
+    wm title $WIDGETS(window_name) "$WDG_OPTIONS(yadt_title) $yadt_rev_title"
 }
 
 #===============================================================================
@@ -1705,7 +1699,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.274 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.287 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -2088,11 +2082,18 @@ proc ::Yadt::Init_Opts {} {
     # Note: any operation with cvs can slow down the whole YaDT execution time
     #
     # Paramater merge_mode accepts the following values: normal, expert
+    #
+    # Parameter use_diff is an experimental parameter, when it equals to zero 
+    # YaDT will compare files without external diff utility usage.
+    # However, there are cases, when such comparing is much slower than via 'diff',
+    # therefore it should not be used in production for now.
+    # See ::struct::list::LlongestCommonSubsequence2 description for more details.
     array set OPTIONS {
         align_acc    0
         autocenter   1
         automerge    0
         backup_merged 0
+        merge_bkp_suffix "bkp"
         ignore_blanks 0
         cvsroot      ""
         cvsmodule   ""
@@ -2597,7 +2598,7 @@ proc ::Yadt::Save_Merged_Files { args } {
         $caller configure -state normal
     }
 
-    if { $WDG_OPTIONS(merge_saved) } {
+    if { $WDG_OPTIONS(merge_saved) && $status } {
         ::Yadt::Set_Save_Operation_State "disabled"
     }
 
@@ -2615,17 +2616,9 @@ proc ::Yadt::Request_File_Name { ind } {
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::WIDGETS
-    variable ::Yadt::OPTIONS
 
     set file_types {
         { {All Files}         {*} }
-    }
-
-    if { $OPTIONS(external_call) } {
-        set fname ""
-        catch { regsub {\(.*\)$} $DIFF_FILES(path,$ind) "" fname }
-    } else {
-        set fname $DIFF_FILES(path,$ind)
     }
 
     if [ info exists DIFF_FILES(merge$ind) ] {
@@ -2635,14 +2628,11 @@ proc ::Yadt::Request_File_Name { ind } {
             set file_ext_descr "[ string totitle [ string trimleft $file_ext "." ] ] files"
             set file_types [ linsert $file_types 0 [ list "$file_ext_descr" "$file_ext" ] ]
         }
-    }
-
-    if [ info exists DIFF_FILES(merge$ind) ] {
         set initial_dir [ file dirname $DIFF_FILES(merge$ind) ]
         set initial_file [ file tail $DIFF_FILES(merge$ind) ]
     } else {
         set initial_dir "[ pwd ]"
-        set initial_file merged_[ file tail $DIFF_FILES(path,$ind) ]
+        set initial_file merged_[ file tail $DIFF_FILES(orig_path,$ind) ]
     }
 
     while { 1 } {
@@ -2656,6 +2646,30 @@ proc ::Yadt::Request_File_Name { ind } {
     }
 
     return $save_file
+}
+
+#===============================================================================
+
+proc ::Yadt::Is_Save_Dialog_Required { ind args } {
+
+    variable ::Yadt::DIFF_FILES
+    variable ::Yadt::WDG_OPTIONS
+
+    set save_as   [ ::CmnTools::Get_Arg -save_as   args -default 0 ]
+
+    if { $save_as || ![ info exists DIFF_FILES(merge$ind) ] } {
+        return 1
+    }
+
+    if { [ info exists WDG_OPTIONS(merge_saved) ] && $WDG_OPTIONS(merge_saved) } {
+        return 0
+    }
+
+    if ![ file exists $DIFF_FILES(merge$ind) ] {
+        return 0
+    }
+
+    return 1
 }
 
 #===============================================================================
@@ -2674,31 +2688,18 @@ proc ::Yadt::Save_One_Merged_File { ind args } {
 
     set backup $OPTIONS(backup_merged)
 
-    if { ![ info exists DIFF_FILES(merge$ind) ] || $save_as || \
-             ![ info exists WDG_OPTIONS(merge_saved) ] || $WDG_OPTIONS(merge_saved) == 0 } {
-
+    if [ ::Yadt::Is_Save_Dialog_Required $ind -save_as $save_as ] {
         set file_name [ ::Yadt::Request_File_Name $ind ]
-
-        if { [ string length $file_name ] == 0 } {
+        if ![ string length $file_name ] {
             return 0
         }
-
-        set DIFF_FILES(merge$ind) $file_name
     } else {
         set file_name $DIFF_FILES(merge$ind)
     }
 
-    switch -- $DIFF_TYPE {
-        2 {
-            set merge_idx 2
-        }
-        3 {
-            if { $MERGE_START == $DIFF_TYPE } {
-                set merge_idx 3
-            } else {
-                set merge_idx [ expr { $DIFF_TYPE - $MERGE_START + $ind } ]
-            }
-        }
+    set merge_idx $DIFF_TYPE
+    if { $DIFF_TYPE == 3  &&  $MERGE_START != $DIFF_TYPE } {
+        set merge_idx [ expr { $DIFF_TYPE - $MERGE_START + $ind } ]
     }
 
     set dir_name [ file dirname $file_name ]
@@ -2709,9 +2710,9 @@ proc ::Yadt::Save_One_Merged_File { ind args } {
         return -code error "Specified directory <$dir_name> is not a directory."
     }
 
-    set bkp_errmsg ""
+    set bkp_errcode 0
     if { $backup && [ file exists $file_name ] && [ file isfile $file_name ] } {
-        catch { file copy -force $file_name $file_name.$OPTIONS(merge_bkp_suffix) } bkp_errmsg
+        set bkp_errcode [ catch { file copy -force $file_name $file_name.$OPTIONS(merge_bkp_suffix) } bkp_errmsg ]
     }
 
     set f_handle [ open "$file_name" w ]
@@ -2719,10 +2720,12 @@ proc ::Yadt::Save_One_Merged_File { ind args } {
     puts -nonewline $f_handle $content
     close $f_handle
 
-    $MERGE_TEXT_WDG($merge_idx) edit modified 0
+    set DIFF_FILES(merge$ind) $file_name
     ::Yadt::Update_Merge_Title $merge_idx
 
-    if { $bkp_errmsg != "" } {
+    $MERGE_TEXT_WDG($merge_idx) edit modified 0
+
+    if { $bkp_errcode } {
         tk_messageBox \
             -message "Failed to save backup for '$file_name':\n$bkp_errmsg" \
             -type ok \
@@ -4612,14 +4615,9 @@ proc ::Yadt::Toggle_Inline_Tags {} {
 
     ::Yadt::Prepare_Mark_Diffs
 
-    switch -- $DIFF_TYPE {
-        2 {
-            set num_diff [ llength $DIFF2(diff) ]
-        }
-        3 {
-            set num_diff [ ::YadtDiff3::Get_Diff_Num ]
-        }
-    }
+    set num_diff [ expr { $DIFF_TYPE == 2 ? \
+                              [ llength $DIFF2(diff) ] : \
+                              [ ::YadtDiff3::Get_Diff_Num ] } ]
 
     if { $OPTIONS(show_inline) } {
         ::Yadt::Text_Tags remove
@@ -5747,32 +5745,14 @@ proc ::Yadt::Update_Merge_Title { i } {
     set title $WDG_OPTIONS(default_merge_title)
     set help_text $title
 
-    switch -- $DIFF_TYPE {
-        2 {
-            if [ info exists DIFF_FILES(merge1) ] {
-                if { $DIFF_FILES(merge1) != $title } {
-                    set title $DIFF_FILES(merge1)
-                    set help_text [ file join [ pwd ] $DIFF_FILES(merge1) ]                    
-                }
-            }
-        }
-        3 {
-            if { $MERGE_START == $DIFF_TYPE } {
-                if [ info exists DIFF_FILES(merge1) ] {
-                    if { $DIFF_FILES(merge1) != $title } {
-                        set title $DIFF_FILES(merge1)
-                        set help_text [ file join [ pwd ] $DIFF_FILES(merge1) ]
-                    }
-                }
-            } else {
-                set ind [ expr $i - $DIFF_TYPE + 2 ]
-                if [ info exists DIFF_FILES(merge$ind) ] {
-                    if { $DIFF_FILES(merge$ind) != $title } {
-                        set title $DIFF_FILES(merge$ind)
-                        set help_text [ file join [ pwd ] $DIFF_FILES(merge$ind) ]
-                    }
-                }
-            }
+    set ind 1
+    if { $DIFF_TYPE == 3  &&  $MERGE_START != $DIFF_TYPE } {
+        set ind [ expr $i - $DIFF_TYPE + 2 ]
+    }
+    if [ info exists DIFF_FILES(merge$ind) ] {
+        if { $DIFF_FILES(merge$ind) != $title } {
+            set title $DIFF_FILES(merge$ind)
+            set help_text $title
         }
     }
 
@@ -6604,18 +6584,17 @@ proc ::Yadt::Draw_Toolbar_Elements { } {
 
     ::Yadt::Draw_Common_Toolbar_Elements
 
+    ::Yadt::Draw_Combo_Toolbar_Element
+    ::Yadt::Draw_Toolbar_Separator $WIDGETS(tool_bar).sep1
+
     switch -- $DIFF_TYPE {
         2 {
-            ::Yadt::Draw_Combo_Toolbar_Element
-            ::Yadt::Draw_Toolbar_Separator $WIDGETS(tool_bar).sep1
             ::Yadt::Draw_Navigation_Toolbar_Elements
             ::Yadt::Draw_Toolbar_Separator $WIDGETS(tool_bar).sep2
             ::Yadt::Draw_Toolbar_Elements2
             ::Yadt::Draw_Toolbar_Separator $WIDGETS(tool_bar).sep3
         }
         3 {
-            ::Yadt::Draw_Combo_Toolbar_Element
-            ::Yadt::Draw_Toolbar_Separator $WIDGETS(tool_bar).sep1
             if { $MERGE_START == 2 } {
                 ::Yadt::Draw_Toolbar_Elements3 2
                 ::Yadt::Draw_Toolbar_Separator $WIDGETS(tool_bar).sep2
@@ -10002,24 +9981,14 @@ proc ::Yadt::Update_Save_Menu_Tooltip {} {
     variable ::Yadt::WDG_OPTIONS
     variable ::Yadt::DIFF_FILES
 
-    switch -- $DIFF_TYPE {
-        2 {
-            set save_text "Save merged file"
-            if [ info exists DIFF_FILES(merge1) ] {
-                append save_text " - $DIFF_FILES(merge1)"
-            }
-        }
-        3 {
-            set save_text "Save merged file"
-            if { $MERGE_START == $DIFF_TYPE } {
-                if [ info exists DIFF_FILES(merge1) ] {
-                    append save_text " - $DIFF_FILES(merge1)"
-                }
-            } else {
-                if { [ info exists DIFF_FILES(merge1) ] && [ info exists DIFF_FILES(merge2) ] } {
-                    append save_text " - $DIFF_FILES(merge1),$DIFF_FILES(merge2)"
-                }
-            }
+    set save_text "Save merged file"
+
+    if [ info exists DIFF_FILES(merge1) ] {
+        append save_text " - $DIFF_FILES(merge1)"
+        if { $DIFF_TYPE == 3  &&  \
+                 $MERGE_START != $DIFF_TYPE && \
+                 [ info exists DIFF_FILES(merge2) ] } {
+            append save_text ",$DIFF_FILES(merge2)"
         }
     }
 
