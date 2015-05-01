@@ -188,14 +188,11 @@ proc ::YadtLcs::Convert_Lcs_Data_To_Diff2 { lcsdata len1 len2 } {
 
 proc ::YadtLcs::Convert_Diff2_To_Lcs_Data { diff2 id1 id2 len1 len2 } {
 
-    set lines($id1) {}
-    set lines($id2) {}
-    
     for { set j 0 } { $j < $len1 } { incr j } {
-        lappend lines($id1) $j
+        set lines[ set id1 ]($j) 1
     }
     for { set j 0 } { $j < $len2 } { incr j } {
-        lappend lines($id2) $j
+        set lines[ set id2 ]($j) 1
     }
 
     foreach diff $diff2 {
@@ -209,23 +206,22 @@ proc ::YadtLcs::Convert_Diff2_To_Lcs_Data { diff2 id1 id2 len1 len2 } {
 
         switch -- $type {
             "d" {
-                set start($id1) [ lsearch $lines($id1) $s($id1) ]
-                set end($id1)   [ lsearch $lines($id1) $e($id1) ]
-                set lines($id1) [ lreplace $lines($id1) $start($id1) $end($id1) ]
+                for { set j $s($id1) } { $j <= $e($id1) } { incr j } {
+                    unset lines[ set id1 ]($j)
+                }
             }
             "a" {
-                set start($id2) [ lsearch $lines($id2) $s($id2) ]
-                set end($id2)   [ lsearch $lines($id2) $e($id2) ]
-                set lines($id2) [ lreplace $lines($id2) $start($id2) $end($id2) ]
+                for { set j $s($id2) } { $j <= $e($id2) } { incr j } {
+                    unset lines[ set id2 ]($j)
+                }
             }
             "c" {
-                set start($id1) [ lsearch $lines($id1) $s($id1) ]
-                set end($id1)   [ lsearch $lines($id1) $e($id1) ]
-                set start($id2) [ lsearch $lines($id2) $s($id2) ]
-                set end($id2)   [ lsearch $lines($id2) $e($id2) ]
-
-                set lines($id1) [ lreplace $lines($id1) $start($id1) $end($id1) ]
-                set lines($id2) [ lreplace $lines($id2) $start($id2) $end($id2) ]
+                for { set j $s($id1) } { $j <= $e($id1) } { incr j } {
+                    unset lines[ set id1 ]($j)
+                }
+                for { set j $s($id2) } { $j <= $e($id2) } { incr j } {
+                    unset lines[ set id2 ]($j)
+                }
             }
             default {
                 return -code error "Unexpected diff type <$type>"
@@ -233,7 +229,7 @@ proc ::YadtLcs::Convert_Diff2_To_Lcs_Data { diff2 id1 id2 len1 len2 } {
         }
     }
 
-    set lcsdata [ list $lines($id1) $lines($id2) ]
+    set lcsdata [ list [ lsort -integer [ array names lines[ set id1 ] ] ] [ lsort -integer [ array names lines[ set id2 ] ] ] ]
 
     return $lcsdata
 }
@@ -257,15 +253,13 @@ proc ::YadtLcs::Find_Unchanged_Diff3_Lines_From_Lcs_Data { lcs } {
 
     set id2 12
     set id3 13
-    set check_list2 [ lindex $lcsdata(23) 0 ]
-    set check_list3 [ lindex $lcsdata(23) 1 ]
-    set max_equal_lines [ llength [ lindex $lcsdata($id2) 0 ] ]
-    if { $max_equal_lines < [ llength [ lindex $lcsdata($id3) 0 ] ] } {
-        set max_equal_lines [ llength [ lindex $lcsdata($id3) 0 ] ]
+    set check_list0 [ lindex $lcsdata(23) 0 ]
+    set check_list1 [ lindex $lcsdata(23) 1 ]
+    if { [ llength [ lindex $lcsdata($id2) 0 ] ] < [ llength [ lindex $lcsdata($id3) 0 ] ] } {
         set id2 13
         set id3 12
-        set check_list2 [ lindex $lcsdata(23) 1 ]
-        set check_list3 [ lindex $lcsdata(23) 0 ]
+        set check_list0 [ lindex $lcsdata(23) 1 ]
+        set check_list1 [ lindex $lcsdata(23) 0 ]
     }
 
     set master_list0 [ lindex $lcsdata($id2) 0 ]
@@ -278,24 +272,30 @@ proc ::YadtLcs::Find_Unchanged_Diff3_Lines_From_Lcs_Data { lcs } {
     set unchanged_lines($id2) {}
     set unchanged_lines($id3) {}
 
-    for { set index1 0 } { $index1 < $max_equal_lines } { incr index1 } {
 
-        # Get element from one of diffs2
-        set el1 [ lindex $master_list0 $index1 ]
+    for { set i 0 } { $i < [ llength $master_list0 ] } { incr i } {
+        set master_array([ lindex $master_list0 $i ]) [ lindex $master_list1 $i ]
+    }
 
-        # Search for this element in another diff2
-        set index2 [ lsearch $slave_list0 $el1 ]
-        if { $index2 < 0 } continue
+    for { set i 0 } { $i < [ llength $slave_list0 ] } { incr i } {
+        set slave_array([ lindex $slave_list0 $i ]) [ lindex $slave_list1 $i ]
+    }
 
-        set el2 [ lindex $master_list1 $index1 ]
-        set el3 [ lindex $slave_list1  $index2 ]
+    for { set i 0 } { $i < [ llength $check_list0 ] } { incr i } {
+        set check_array([ lindex $check_list0 $i ]) [ lindex $check_list1 $i ]
+    }
 
-        # Final Check with 2vs3 diff
-        set chk_idx2 [ lsearch $check_list2 $el2 ]
-        if { $chk_idx2 < 0 } continue
+    foreach el1 [ lsort -integer [ array names master_array ] ] {
 
-        set chk_el [ lindex $check_list3 $chk_idx2 ]
-        if { $chk_el != $el3 } continue
+        if ![ info exists slave_array($el1) ] continue
+        
+        set el2 $master_array($el1)
+
+        if ![ info exists check_array($el2) ] continue
+
+        set el3 $slave_array($el1)
+
+        if { $el3 != $check_array($el2) } continue
 
         lappend unchanged_lines(1)    $el1
         lappend unchanged_lines($id2) $el2
