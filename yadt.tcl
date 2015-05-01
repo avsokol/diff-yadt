@@ -9171,7 +9171,7 @@ proc ::Yadt::Toggle_Merge_Mode {} {
             set DIFF_INT(pos) [ ::YadtDiff3::Get_Diff_Id_For_Range $DIFF_INT(pos) ]
         }
         expert {
-            ::Yadt::Current_Tag remove [ ::YadtDiff3::Get_Diff_Id_For_Range $DIFF_INT(pos) ] -for_diff_id 1
+            ::Yadt::Current_Tag remove $DIFF_INT(pos) -for_diff_id 1
             set DIFF_INT(pos) [ ::YadtDiff3::Get_Top_Range_For_Diff_Id $DIFF_INT(pos) ]
         }
     }
