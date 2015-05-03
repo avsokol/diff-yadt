@@ -334,8 +334,8 @@ proc ::YadtLcs::Find_Lcs_Corresponding_Lines { lcs lines line } {
             set lcsdata(13,1) [ lreplace $lcsdata(13,1) $idx13 $idx13 ]
             set lcsdata(13,3) [ lreplace $lcsdata(13,3) $idx13 $idx13 ]
 
-            set lcsdata(23,2) [ lreplace $lcsdata(23,2) $idx13 $idx23 ]
-            set lcsdata(23,3) [ lreplace $lcsdata(23,3) $idx13 $idx23 ]
+            set lcsdata(23,2) [ lreplace $lcsdata(23,2) $idx23 $idx23 ]
+            set lcsdata(23,3) [ lreplace $lcsdata(23,3) $idx23 $idx23 ]
         }
 
         if { $ln12 < $ln13 } {
