@@ -4417,14 +4417,18 @@ proc ::Yadt::Add_Lines {} {
             set every [ ::Yadt::Get_Diff_Update_Period $num_diff ]
 
             for { set i 1 } { $i <= $num_diff } { incr i } {
+                set show 0
                 if { $every > 1 } {
                     if { [ expr $i % $every ] == 0 } {
-                        update
+                        set show 1
+                        if { [ tk windowingsystem ] != "aqua" } {
+                            update
+                        }
                     }
                 }
                 
                 incr DIFF_INT(count)
-                ::Yadt::Status_Msg menustatus "Analyzing difference $i of $num_diff ..."
+                ::Yadt::Status_Msg menustatus "Analyzing difference $i of $num_diff ..." $show
                 ::YadtDiff3::Align_One_Diff3 $i
                 set combo_value [ format "%-6d: %s: %s: %s" \
                                       $DIFF_INT(count) \
