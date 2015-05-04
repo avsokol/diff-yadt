@@ -310,10 +310,10 @@ proc ::StarkitGenerator::Generate_One_Kit { kit kit_types starkit_dir output_dir
     foreach platform $target_platforms {
         ::StarkitGenerator::Log_Msg "\nCreating platform specific directory structures and files..."
 
-        set src_files_list [ ::Make${pkg}::Get_Platform_Specific_Files_List $platform $src_dir/difftools/$platform ]
+        set src_files_list [ ::Make${pkg}::Get_Platform_Specific_Files_List $platform $src_dir/difftools/$platform tmp_files ]
 
         set dst_files_list [ ::StarkitGenerator::Copy_Files_Between_Directories $src_dir/difftools/$platform $kit_dir/difftools $src_files_list ]
-        
+
         ::StarkitGenerator::Log_Msg "Creating platform specific directory structures and files...Done"
 
         ::StarkitGenerator::Log_Msg "\nGenerating <$kit> for $platform..."
@@ -322,6 +322,7 @@ proc ::StarkitGenerator::Generate_One_Kit { kit kit_types starkit_dir output_dir
         }
         ::StarkitGenerator::Log_Msg "Generating <$kit> for $platform...Done"
 
+        ::StarkitGenerator::Delete_Files_And_Empty_Dir $tmp_files
         ::StarkitGenerator::Delete_Files_And_Empty_Dir $dst_files_list
     }
 

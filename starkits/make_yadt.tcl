@@ -69,7 +69,11 @@ proc ::MakeYadt::Get_Common_Files_List { syren_src_dir } {
 
 #===============================================================================
 
-proc ::MakeYadt::Get_Platform_Specific_Files_List { platform syren_src_dir } {
+proc ::MakeYadt::Get_Platform_Specific_Files_List { platform syren_src_dir { tmp_files {} } } {
+
+    if [ llength $tmp_files ] {
+        upvar $tmp_files tmp_src_files
+    }
 
     set fname .toolsrc
     set rcfile [ file join $syren_src_dir $fname ]
@@ -89,6 +93,8 @@ proc ::MakeYadt::Get_Platform_Specific_Files_List { platform syren_src_dir } {
     set fd [ open $rcfile w+ ]
     puts $fd [ join $content \n ]
     close $fd
+
+    lappend tmp_src_files [ file join $syren_src_dir $fname ]
 
     lappend src_files_list $fname
 
