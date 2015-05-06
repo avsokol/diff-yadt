@@ -149,9 +149,24 @@ proc ::YadtDiff3::Get_Which_File_For_Diff_Id { diff_id } {
 
 proc ::YadtDiff3::Find_Which_File_For_Diff_Id { diff_id } {
 
-    lassign [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id 1 ] str1 dummy
-    lassign [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id 2 ] str2 dummy
-    lassign [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id 3 ] str3 dummy
+    lassign [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id 1 lf1 ] str1 dummy
+    lassign [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id 2 lf2 ] str2 dummy
+    lassign [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id 3 lf3 ] str3 dummy
+
+    if { $str1 == $str2 && $str1 == $str3 } {
+        if { $lf1 == $lf2 && $lf1 == $lf3 } {
+            return -code error "Couldn't find diffrence while it should be"
+        }
+        if { $lf1 == $lf2 } {
+            return 3
+        }
+        if { $lf1 == $lf3 } {
+            return 2
+        }
+        if { $lf2 == $lf3 } {
+            return 1
+        }
+    } 
 
     if { $str1 == $str2 } {
         return 3

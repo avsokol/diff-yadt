@@ -48,6 +48,8 @@ variable ::Yadt::MAP_TITLE
 variable ::Yadt::MAP_TITLE_SHORT
 variable ::Yadt::DIFF_CMD
 variable ::Yadt::DIFF_IGNORE_SPACES_OPTION "-w"
+variable ::Yadt::NO_NEWLINE_WARNING {\ No newline at end of file}
+variable ::Yadt::NOLF
 variable ::Yadt::VCS_CMD
 
 # widget variables
@@ -489,7 +491,7 @@ proc ::Yadt::Prepare_GIT_Cmd { filename index rev } {
     set n_file [ file nativename [ file normalize [ file join $OPTIONS(git_abs_dir) $abs_file  ] ] ]
     set filename [ string range $n_file [ expr [ string length $OPTIONS(git_abs_dir) ] + 1 ] end ]
 
-    set vcs_cmd [ list $VCS_CMD show $rev:$filename ]
+    set vcs_cmd [ list $VCS_CMD -C $OPTIONS(git_abs_dir) show $rev:$filename ]
 
     return $vcs_cmd
 }
@@ -1704,7 +1706,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.293 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.294 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -2445,6 +2447,48 @@ proc ::Yadt::Get_Line_End_Translation {} {
 
 #===============================================================================
 
+proc ::Yadt::Is_No_Last_EOL { wdg } {
+
+    return [ expr ![ regexp {\.0$} [ $wdg index "end-1line lineend" ] ] ]
+}
+
+#===============================================================================
+
+proc ::Yadt::Is_Last_Line_Envolved { diff_id index } {
+
+    variable ::Yadt::TEXT_NUM_WDG
+    variable ::Yadt::DIFF_TYPE
+
+    switch -- $DIFF_TYPE {
+        2 {
+            lassign [ ::Yadt::Get_Pdiff_For_Diff_Id $diff_id ] thisdiff s(1) e(1) s(2) e(2) type
+        }
+        3 {
+            lassign [ ::Yadt::Get_Pdiff_For_Diff_Id $diff_id -file_id $index ] \
+                thisdiff($index) s($index) e($index) type($index)
+        }
+    }
+
+    set num_end($index) [ $TEXT_NUM_WDG($index) get end-2lines end-1lines-1char ]
+    if { $num_end($index) == $e($index) } {
+        return 1
+    }
+    return 0
+}
+
+#===============================================================================
+
+proc ::Yadt::Get_Diff_Id_Content { diff_id index } {
+
+    variable ::Yadt::TEXT_WDG
+
+    lassign [ ::Yadt::Get_Diff_Scr_Params $diff_id ] start end type
+
+    return [ $TEXT_WDG($index) get $start.0 $end.end ]
+}
+
+#===============================================================================
+
 proc ::Yadt::Load_Files {} {
 
     variable ::Yadt::DIFF_TYPE
@@ -2452,8 +2496,12 @@ proc ::Yadt::Load_Files {} {
     variable ::Yadt::TEXT_WDG
     variable ::Yadt::OPTIONS
     variable ::Yadt::WIDGETS
+    variable ::Yadt::NO_NEWLINE_WARNING
+    variable ::Yadt::NOLF
 
     set translation [ ::Yadt::Get_Line_End_Translation ]
+
+    set NOLF(global) 0
 
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
         if { ![ info exists DIFF_FILES(path,$i) ] && \
@@ -2467,17 +2515,23 @@ proc ::Yadt::Load_Files {} {
         $TEXT_WDG($i) delete 1.0 end
         $TEXT_WDG($i) insert 1.0 $DIFF_FILE(content,$i)
 
-        # In case content recieved from cvs diff,
-        # it could have no newline at the end
-        if { ![ regexp {\.0$} \
-                    [ $TEXT_WDG($i) index "end-1lines lineend" ] ] } {
-            $TEXT_WDG($i) insert end "\n"
+        set NOLF($i) [ ::Yadt::Is_No_Last_EOL $TEXT_WDG($i) ]
+        if { $NOLF($i) } {
+            set NOLF(global) 1
         }
 
         if { $i == 1 } {
             ::Yadt::Load_Merge_File $DIFF_FILE(content,1)
         }
         update
+    }
+
+    if { $NOLF(global) } {
+        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+            if { $NOLF($i) } {
+                $TEXT_WDG($i) insert end $NO_NEWLINE_WARNING\n
+            }
+        }
     }
 }
 
@@ -2520,15 +2574,16 @@ proc ::Yadt::Load_Merge_File { content } {
     variable ::Yadt::MERGE_START
     variable ::Yadt::MERGE_INFO_WDG
     variable ::Yadt::MERGE_TEXT_WDG
+    variable ::Yadt::NO_NEWLINE_WARNING
 
     for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
         $MERGE_TEXT_WDG($j) delete 1.0 end
         $MERGE_TEXT_WDG($j) insert 1.0 $content
         $MERGE_TEXT_WDG($j) edit modified 0
 
-        if { ![ regexp {\.0$} \
-                    [ $MERGE_TEXT_WDG($j) index "end-1lines lineend" ] ] } {
-            $MERGE_TEXT_WDG($j) insert end "\n"
+        set nolf [ ::Yadt::Is_No_Last_EOL $MERGE_TEXT_WDG($j) ]
+        if { $nolf } {
+            $MERGE_TEXT_WDG($j) insert end $NO_NEWLINE_WARNING\n
         }
 
         set lines_num($j) [ lindex [ split [ $MERGE_TEXT_WDG($j) index end-1lines ] . ] 0 ]
@@ -2714,15 +2769,13 @@ proc ::Yadt::Save_One_Merged_File { ind args } {
         set bkp_errcode [ catch { file copy -force $file_name $file_name.$OPTIONS(merge_bkp_suffix) } bkp_errmsg ]
     }
 
-    set f_handle [ open "$file_name" w ]
-    set content [ $MERGE_TEXT_WDG($merge_idx) get 1.0 end-1lines ]
-    puts -nonewline $f_handle $content
-    close $f_handle
+    set saved [ ::Yadt::Save_Merged_Widget_Content_To_File $merge_idx $file_name ]
 
-    set DIFF_FILES(merge$ind) $file_name
-    ::Yadt::Update_Merge_Title $merge_idx
-
-    $MERGE_TEXT_WDG($merge_idx) edit modified 0
+    if { $saved } {
+        set DIFF_FILES(merge$ind) $file_name
+        ::Yadt::Update_Merge_Title $merge_idx
+        $MERGE_TEXT_WDG($merge_idx) edit modified 0
+    }
 
     if { $bkp_errcode } {
         tk_messageBox \
@@ -2731,6 +2784,113 @@ proc ::Yadt::Save_One_Merged_File { ind args } {
             -icon warning \
             -title Warning
     }
+
+    return $saved
+}
+
+#===============================================================================
+
+proc ::Yadt::Save_Merged_Widget_Content_To_File { merge_idx file_name } {
+
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::DIFF2
+    variable ::Yadt::DIFF_INT
+    variable ::Yadt::TEXT_NUM_WDG
+    variable ::Yadt::MERGE_TEXT_WDG
+    variable ::Yadt::WIDGETS
+    variable ::Yadt::NO_NEWLINE_WARNING
+    variable ::Yadt::NOLF
+
+    if { $NOLF(global) } {
+
+        set last_merged_method -1
+        set confirm 1
+
+        switch -- $DIFF_TYPE {
+            2 {
+                set diff_id [ llength $DIFF2(diff) ]
+            }
+            3 {
+                set diff_id [ ::YadtDiff3::Get_Diff_Num ]            
+            }
+        }
+
+        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+            set cnt($i) [ ::Yadt::Get_Diff_Id_Content $diff_id $i ]
+            if { $NOLF($i) } {
+                set cnt($i) [ string range $cnt($i) \
+                                  0 [ expr [ string length $cnt($i) ] - [ string length $NO_NEWLINE_WARNING ] - 1 ] ]
+            }
+        }
+
+        switch -- $DIFF_TYPE {
+            2 {
+                if { $NOLF(1) != $NOLF(2) } {
+                    if { $cnt(1) == $cnt(2) } {
+                        set confirm 0
+                    }
+                }
+
+                lassign [ ::Yadt::Get_Pdiff_For_Diff_Id $diff_id ] thisdiff s(1) e(1) s(2) e(2) type
+
+                set num_end(1) [ $TEXT_NUM_WDG(1) get end-2lines end-1lines-1char ]
+                set num_end(2) [ $TEXT_NUM_WDG(2) get end-2lines end-1lines-1char ]
+
+                if { $num_end(1) == $e(1) || $num_end(2) == $e(2) } {
+                    set last_merged_method $::Yadt::DIFF_INT(normal_merge$diff_id)
+                }
+            }
+            3 {
+                if { $NOLF(1) != $NOLF(2) || $NOLF(1) != $NOLF(3) } {
+                    if { $cnt(1) == $cnt(2) && $cnt(1) == $cnt(3) } {
+                        set confirm 0
+                    }
+                }
+
+                for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                    lassign [ ::Yadt::Get_Pdiff_For_Diff_Id $diff_id -file_id $i ] \
+                        thisdiff($i) s($i) e($i) type($i)
+                    set num_end($i) [ $TEXT_NUM_WDG($i) get end-2lines end-1lines-1char ]
+                }
+
+                if { $num_end(1) == $e(1) || $num_end(2) == $e(2) || $num_end(3) == $e(3) } {
+                    set last_merged_method $::Yadt::DIFF_INT(normal_merge$diff_id,$merge_idx)
+                }
+            }
+        }
+
+        if { $last_merged_method != -1 } {
+            set last_merged_method [ lindex [ split $last_merged_method {} ] end ]                    
+        }
+
+        set answer "yes"
+        if { $confirm } {
+            set answer [ tk_messageBox \
+                             -message "You have files with different LF at the end.\
+                                       Should YaDT add new line at the end of a merged file?" \
+                             -type yesnocancel \
+                             -icon question \
+                             -default yes \
+                             -title "Attention!" \
+                             -parent $WIDGETS(window_name) ]
+        }
+                
+        if { $answer == "cancel" } {
+            return 0
+        }
+
+        if { ( $last_merged_method != -1 && $NOLF($last_merged_method) ) || $answer == "no" } {
+            set content [ $MERGE_TEXT_WDG($merge_idx) get 1.0 end-1lines-1char-[ string length $NO_NEWLINE_WARNING ]char ]
+        } else {
+            set content [ $MERGE_TEXT_WDG($merge_idx) get 1.0 end-1lines ]
+        }
+    } else {
+        set content [ $MERGE_TEXT_WDG($merge_idx) get 1.0 end-1lines ]
+    }
+
+    set f_handle [ open "$file_name" w ]
+    puts -nonewline $f_handle $content
+    close $f_handle
 
     return 1
 }
@@ -3044,12 +3204,14 @@ proc ::Yadt::Update_Num_Lines {} {
     variable ::Yadt::TEXT_WDG
     variable ::Yadt::TEXT_NUM_WDG
     variable ::Yadt::TEXT_INFO_WDG
+    variable ::Yadt::NOLF
 
     set min_num 0
 
+    set endline end-1lines
+
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-        set lines_num($i) [ lindex [ split \
-                                         [ $TEXT_WDG($i) index end-1lines ] . ] 0 ]
+        set lines_num($i) [ lindex [ split [ $TEXT_WDG($i) index $endline ] . ] 0 ]
         if { $min_num == 0 } {
             set min_num $lines_num($i)
         } elseif { $lines_num($i) < $min_num } {
@@ -3156,13 +3318,22 @@ proc ::Yadt::Get_File_Strings { args } {
 
 #===============================================================================
 
-proc ::Yadt::Gather_File_Strings_By_Diff_Id { diff_id file_num } {
+proc ::Yadt::Gather_File_Strings_By_Diff_Id { diff_id file_num { lastlf "" }} {
 
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::DIFF_INT
+    variable ::Yadt::NOLF
+
+    if { $lastlf != "" } {
+        upvar $lastlf lf
+    }
 
     foreach [ list thisdiff($file_num) s($file_num) e($file_num) type($file_num) ] \
         $DIFF_INT($diff_id,$file_num,pdiff) { }
+
+    if { $e($file_num) == [ llength $DIFF_FILES(strings,$file_num) ] } {
+        set lf $NOLF($file_num)
+    }
 
     if { $type($file_num) == "a" } {
         return [ list {} {} ]
@@ -3386,6 +3557,8 @@ proc ::Yadt::Merge2_By_Method { new_method args } {
     variable ::Yadt::MERGE_INFO_WDG
     variable ::Yadt::TEXT_WDG
     variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::NO_NEWLINE_WARNING
+    variable ::Yadt::NOLF
 
     set diff_id [ ::CmnTools::Get_Arg -pos args -default $DIFF_INT(pos) ]
     set mark [ ::CmnTools::Get_Arg -mark args -default 1 ]
@@ -3421,17 +3594,27 @@ proc ::Yadt::Merge2_By_Method { new_method args } {
     set newlines 0
     set newtext ""
 
-    foreach i [ split $new_method {} ] {
-        set new_lines($i) [ ::Yadt::Diff_Size $diff_id $i ]
-        set addtext  [ $TEXT_WDG($i) get $start.0 $start.0+$new_lines($i)lines ]
+    set method_len [ string length $new_method ]
+    set m_num 0
 
+    foreach i [ split $new_method {} ] {
+        incr m_num
+
+        set new_lines($i) [ ::Yadt::Diff_Size $diff_id $i ]
         incr newlines $new_lines($i)
 
-        if { $newtext == "" } {
-            set newtext $addtext
+        # Here we also consider different LF in compared files
+        if { $NOLF(global) && [ ::Yadt::Is_Last_Line_Envolved $diff_id $i ] && $NOLF($i) } {
+            set add_text [ $TEXT_WDG($i) get $start.0 $start.0+$new_lines($i)lines-[ string length $NO_NEWLINE_WARNING ]char-1char ]
+            if { $m_num == $method_len } {
+                append add_text $NO_NEWLINE_WARNING
+            }
+            append add_text \n
         } else {
-            append newtext $addtext
+            set add_text [ $TEXT_WDG($i) get $start.0 $start.0+$new_lines($i)lines ]
         }
+
+        append newtext $add_text
     }
 
     set info_lines {}
@@ -3487,7 +3670,6 @@ proc ::Yadt::Merge3 { target new_method args } {
 
 proc ::Yadt::Count_Diff_Id_Merged_Lines { diff_id target } {
 
-    variable ::Yadt::OPTIONS
     variable ::Yadt::DIFF_INT
 
     set lines 0
@@ -3536,6 +3718,8 @@ proc ::Yadt::Merge_Diff3_By_Method { target new_method args } {
     variable ::Yadt::TEXT_NUM_WDG
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::OPTIONS
+    variable ::Yadt::NO_NEWLINE_WARNING
+    variable ::Yadt::NOLF
 
     set diff_id [ ::CmnTools::Get_Arg -pos  args -default $DIFF_INT(pos) ]
     set mark [ ::CmnTools::Get_Arg -mark args -default 1 ]
@@ -3573,23 +3757,34 @@ proc ::Yadt::Merge_Diff3_By_Method { target new_method args } {
     set newlines 0
     set newtext ""
 
-    foreach i [ split $new_method {} ] {
-        set new_lines($i) [ ::Yadt::Diff_Size $diff_id $i ]
+    set method_len [ string length $new_method ]
+    set m_num 0
 
+    foreach i [ split $new_method {} ] {
+        incr m_num
         set addtext ""
         for { set j $start } { $j <= $end } { incr j } {
-            set num_txt [ $TEXT_NUM_WDG($i) get $j.0 $j.end ]
-            if { $num_txt == "" } continue
-            append addtext [ $TEXT_WDG($i) get $j.0 $j.0+1lines ]
+            if { [ $TEXT_NUM_WDG($i) get $j.0 $j.end ] == "" } continue
+
+            # Here we also consider different LF in compared files
+            if { $j == $end && $NOLF(global) && \
+                     [ ::Yadt::Is_Last_Line_Envolved $diff_id $i ] && $NOLF($i) } {
+                set add_text [ $TEXT_WDG($i) get $j.0 $j.0+1lines-[ string length $NO_NEWLINE_WARNING ]char-1char ]
+                if { $m_num == $method_len } {
+                    append add_text $NO_NEWLINE_WARNING
+                }
+                append add_text \n
+            } else {
+                set add_text [ $TEXT_WDG($i) get $j.0 $j.0+1lines ]
+            }
+
+            append addtext $add_text
         }
 
+        set new_lines($i) [ ::Yadt::Diff_Size $diff_id $i ]
         incr newlines $new_lines($i)
 
-        if { $newtext == "" } {
-            set newtext $addtext
-        } else {
-            append newtext $addtext
-        }
+        append newtext $addtext
     }
 
     set info_lines {}
@@ -3627,6 +3822,8 @@ proc ::Yadt::Merge_Range3_By_Method { target new_method args } {
     variable ::Yadt::TEXT_NUM_WDG
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::OPTIONS
+    variable ::Yadt::NO_NEWLINE_WARNING
+    variable ::Yadt::NOLF
 
     set diff_id [ ::CmnTools::Get_Arg -pos  args -default $DIFF_INT(pos) ]
     set r_id [ ::YadtDiff3::Get_Diff_Id_For_Range $diff_id ]
@@ -3661,22 +3858,35 @@ proc ::Yadt::Merge_Range3_By_Method { target new_method args } {
 
         if { $method == -1 } continue
 
+        set method_len [ string length $method ]
+        set m_num 0
+
         foreach i [ split $method {} ] {
+
+            incr m_num
 
             incr newlines [ ::Yadt::Diff_Size $range $i ]
 
             set addtext ""
             for { set j $r_start } { $j <= $r_end } { incr j } {
-                set num_txt [ $TEXT_NUM_WDG($i) get $j.0 $j.end ]
-                if { $num_txt == "" } continue
-                append addtext [ $TEXT_WDG($i) get $j.0 $j.0+1lines ]
+                if { [ $TEXT_NUM_WDG($i) get $j.0 $j.end ] == "" } continue
+
+                # Here we also consider different LF in compared files
+                if { $j == $end && $NOLF(global) && \
+                         [ ::Yadt::Is_Last_Line_Envolved $r_id $i ] && $NOLF($i) } {
+                    set add_text [ $TEXT_WDG($i) get $j.0 $j.0+1lines-[ string length $NO_NEWLINE_WARNING ]char-1char ]
+                    if { $m_num == $method_len } {
+                        append add_text $NO_NEWLINE_WARNING
+                    }
+                    append add_text \n
+                } else {
+                    set add_text [ $TEXT_WDG($i) get $j.0 $j.0+1lines ]
+                }
+
+                append addtext $add_text
             }
 
-            if { $newtext == "" } {
-                set newtext $addtext
-            } else {
-                append newtext $addtext
-            }
+            append newtext $addtext
         }
     }
 
@@ -8340,7 +8550,7 @@ proc ::Yadt::Bind_Events {} {
     if { $DIFF_TYPE == 3 } {
         foreach wdg [ concat $WIDGETS(diff_combo) $WIDGETS(tool_bar) [ winfo children $WIDGETS(tool_bar) ] ] {
             foreach key $key_events {
-                bind $wdg $key { 
+                bind $wdg $key {
                     ::Yadt:::Show_Merge_Mode_Popup_Menu %X %Y 
                 }
             }
