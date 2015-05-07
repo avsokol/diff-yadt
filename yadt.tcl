@@ -2447,17 +2447,21 @@ proc ::Yadt::Get_Line_End_Translation {} {
 
 #===============================================================================
 
-proc ::Yadt::Is_No_Last_EOL { wdg } {
+proc ::Yadt::Is_No_Wdg_Last_EOL { wdg } {
 
     return [ expr ![ regexp {\.0$} [ $wdg index "end-1line lineend" ] ] ]
 }
 
 #===============================================================================
 
-proc ::Yadt::Is_Last_Line_Envolved { diff_id index } {
+proc ::Yadt::Is_Last_Line_Envolved { diff_id index { last_line "" } } {
 
     variable ::Yadt::TEXT_NUM_WDG
     variable ::Yadt::DIFF_TYPE
+
+    if { $last_line != "" } {
+        upvar $last_line line
+    }
 
     switch -- $DIFF_TYPE {
         2 {
@@ -2469,7 +2473,8 @@ proc ::Yadt::Is_Last_Line_Envolved { diff_id index } {
         }
     }
 
-    set num_end($index) [ $TEXT_NUM_WDG($index) get end-2lines end-1lines-1char ]
+    set num_end($index) [ lindex [ string trim [ $TEXT_NUM_WDG($index) get 1.0 end ] ] end ]
+    set line $e($index)
     if { $num_end($index) == $e($index) } {
         return 1
     }
@@ -2515,7 +2520,7 @@ proc ::Yadt::Load_Files {} {
         $TEXT_WDG($i) delete 1.0 end
         $TEXT_WDG($i) insert 1.0 $DIFF_FILE(content,$i)
 
-        set NOLF($i) [ ::Yadt::Is_No_Last_EOL $TEXT_WDG($i) ]
+        set NOLF($i) [ ::Yadt::Is_No_Wdg_Last_EOL $TEXT_WDG($i) ]
         if { $NOLF($i) } {
             set NOLF(global) 1
         }
@@ -2581,7 +2586,7 @@ proc ::Yadt::Load_Merge_File { content } {
         $MERGE_TEXT_WDG($j) insert 1.0 $content
         $MERGE_TEXT_WDG($j) edit modified 0
 
-        set nolf [ ::Yadt::Is_No_Last_EOL $MERGE_TEXT_WDG($j) ]
+        set nolf [ ::Yadt::Is_No_Wdg_Last_EOL $MERGE_TEXT_WDG($j) ]
         if { $nolf } {
             $MERGE_TEXT_WDG($j) insert end $NO_NEWLINE_WARNING\n
         }
@@ -2803,7 +2808,10 @@ proc ::Yadt::Save_Merged_Widget_Content_To_File { merge_idx file_name } {
 
     if { $NOLF(global) } {
 
-        set last_merged_method -1
+        # variable last_merged_method shows which merge method is
+        # applied to the last diff. If the last diff does not envolve
+        # the last file line this variable equals 0
+        set last_merged_method 0
         set confirm 1
 
         switch -- $DIFF_TYPE {
@@ -2811,12 +2819,14 @@ proc ::Yadt::Save_Merged_Widget_Content_To_File { merge_idx file_name } {
                 set diff_id [ llength $DIFF2(diff) ]
             }
             3 {
-                set diff_id [ ::YadtDiff3::Get_Diff_Num ]            
+                set diff_id [ ::YadtDiff3::Get_Diff_Num ]
             }
         }
 
+        # getting last diff files lines
         for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
             set cnt($i) [ ::Yadt::Get_Diff_Id_Content $diff_id $i ]
+            # removing no newline mark if any
             if { $NOLF($i) } {
                 set cnt($i) [ string range $cnt($i) \
                                   0 [ expr [ string length $cnt($i) ] - [ string length $NO_NEWLINE_WARNING ] - 1 ] ]
@@ -2825,28 +2835,22 @@ proc ::Yadt::Save_Merged_Widget_Content_To_File { merge_idx file_name } {
 
         switch -- $DIFF_TYPE {
             2 {
-                if { $NOLF(1) != $NOLF(2) } {
-                    if { $cnt(1) == $cnt(2) } {
-                        set confirm 0
-                    }
-                }
-
                 lassign [ ::Yadt::Get_Pdiff_For_Diff_Id $diff_id ] thisdiff s(1) e(1) s(2) e(2) type
 
                 set num_end(1) [ $TEXT_NUM_WDG(1) get end-2lines end-1lines-1char ]
                 set num_end(2) [ $TEXT_NUM_WDG(2) get end-2lines end-1lines-1char ]
 
                 if { $num_end(1) == $e(1) || $num_end(2) == $e(2) } {
+                    # last diff envolves last line
                     set last_merged_method $::Yadt::DIFF_INT(normal_merge$diff_id)
+                }
+
+                # detecting whether we need a confirmation from user about LF type save
+                if { $NOLF(1) == $NOLF(2) || $last_merged_method == 0 || ( $last_merged_method != -1 && $cnt(1) == $cnt(2) ) } {
+                    set confirm 0
                 }
             }
             3 {
-                if { $NOLF(1) != $NOLF(2) || $NOLF(1) != $NOLF(3) } {
-                    if { $cnt(1) == $cnt(2) && $cnt(1) == $cnt(3) } {
-                        set confirm 0
-                    }
-                }
-
                 for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
                     lassign [ ::Yadt::Get_Pdiff_For_Diff_Id $diff_id -file_id $i ] \
                         thisdiff($i) s($i) e($i) type($i)
@@ -2854,12 +2858,21 @@ proc ::Yadt::Save_Merged_Widget_Content_To_File { merge_idx file_name } {
                 }
 
                 if { $num_end(1) == $e(1) || $num_end(2) == $e(2) || $num_end(3) == $e(3) } {
+                    # last diff envolves last line
                     set last_merged_method $::Yadt::DIFF_INT(normal_merge$diff_id,$merge_idx)
+                }
+
+                # detecting whether we need a confirmation from user about LF type save
+                if { ( $NOLF(1) == $NOLF(2) && $NOLF(1) == $NOLF(3) ) || \
+                         $last_merged_method == 0 || \
+                         ( $last_merged_method != -1 && $cnt(1) == $cnt(2) && $cnt(1) == $cnt(3) ) } {
+                    set confirm 0
                 }
             }
         }
 
-        if { $last_merged_method != -1 } {
+        if { $last_merged_method != -1 && $last_merged_method != 0 } {
+            # finding which file adds the last line in a merged file
             set last_merged_method [ lindex [ split $last_merged_method {} ] end ]                    
         }
 
@@ -2879,8 +2892,25 @@ proc ::Yadt::Save_Merged_Widget_Content_To_File { merge_idx file_name } {
             return 0
         }
 
-        if { ( $last_merged_method != -1 && $NOLF($last_merged_method) ) || $answer == "no" } {
+        # Getting merged widget content.
+        # Note: NOLF(global) == 1 - means that at least one file has NOLF at the end
+        # 1. if last_merged_method == 0 - last diff doesn't envolve last line
+        #                               - all files has no LF at the end
+        #                               - merge widget has nonewline mark at the end
+        # 2. if last_merged_method == -1 - means that last diff envolves last line and 
+        #                                 at least one file has NOLF at the end.
+        #                                 User should be asked how to save a merged file: with LF or not.
+        # 3. if last_merged_method != -1 - means that the last diff envolves last line and
+        #    and NOLF($last_merged_method) == 1 - means the last line has nonewline mark at the end - 
+        #                                 get content the way as in p.1.
+        #    and NOLF($last_merged_method) == 0 -means  the last line has NO nonewline mark at the end -
+        #                                 get content normally
+        # 4. NOLF(global) == 0 means all files have LF at the end - take content normally.
+
+        if { $last_merged_method == 0 || ($last_merged_method != -1 && $NOLF($last_merged_method) ) } {
             set content [ $MERGE_TEXT_WDG($merge_idx) get 1.0 end-1lines-1char-[ string length $NO_NEWLINE_WARNING ]char ]
+        } elseif { $answer == "no" } {
+            set content [ $MERGE_TEXT_WDG($merge_idx) get 1.0 end-2char ]
         } else {
             set content [ $MERGE_TEXT_WDG($merge_idx) get 1.0 end-1lines ]
         }
@@ -3764,11 +3794,12 @@ proc ::Yadt::Merge_Diff3_By_Method { target new_method args } {
         incr m_num
         set addtext ""
         for { set j $start } { $j <= $end } { incr j } {
-            if { [ $TEXT_NUM_WDG($i) get $j.0 $j.end ] == "" } continue
+            set f_line($i) [ $TEXT_NUM_WDG($i) get $j.0 $j.end ]
+            if { $f_line($i) == "" } continue
 
             # Here we also consider different LF in compared files
-            if { $j == $end && $NOLF(global) && \
-                     [ ::Yadt::Is_Last_Line_Envolved $diff_id $i ] && $NOLF($i) } {
+            set last [ ::Yadt::Is_Last_Line_Envolved $diff_id $i last_line($i) ]
+            if { $NOLF(global) && $NOLF($i) && $last && $last_line($i) == $f_line($i) } {
                 set add_text [ $TEXT_WDG($i) get $j.0 $j.0+1lines-[ string length $NO_NEWLINE_WARNING ]char-1char ]
                 if { $m_num == $method_len } {
                     append add_text $NO_NEWLINE_WARNING
@@ -3848,7 +3879,11 @@ proc ::Yadt::Merge_Range3_By_Method { target new_method args } {
     lassign [ ::Yadt::Get_Diff_Scr_Params $diff_id ] start end type
     if { $start == -1 && $end == -1 && $type == -1 } return
 
-    foreach range [ ::YadtDiff3::Get_Ranges_For_Diff_Id $r_id ] {
+    set r_num 0
+    set ranges [ ::YadtDiff3::Get_Ranges_For_Diff_Id $r_id ]
+    foreach range $ranges {
+
+        incr r_num
         lassign [ ::YadtDiff3::Get_Range $range ] r_start r_end r_type
 
         set method $DIFF_INT(expert_merge$range,$target)
@@ -3869,13 +3904,15 @@ proc ::Yadt::Merge_Range3_By_Method { target new_method args } {
 
             set addtext ""
             for { set j $r_start } { $j <= $r_end } { incr j } {
-                if { [ $TEXT_NUM_WDG($i) get $j.0 $j.end ] == "" } continue
+                set f_line($i) [ $TEXT_NUM_WDG($i) get $j.0 $j.end ]
+                if { $f_line($i) == "" } continue
 
                 # Here we also consider different LF in compared files
-                if { $j == $end && $NOLF(global) && \
-                         [ ::Yadt::Is_Last_Line_Envolved $r_id $i ] && $NOLF($i) } {
+                set last [ ::Yadt::Is_Last_Line_Envolved $r_id $i last_line($i) ]
+
+                if { $NOLF(global) && $NOLF($i) && $last && $last_line($i) == $f_line($i) } {
                     set add_text [ $TEXT_WDG($i) get $j.0 $j.0+1lines-[ string length $NO_NEWLINE_WARNING ]char-1char ]
-                    if { $m_num == $method_len } {
+                    if { $m_num == $method_len && $r_num == [ llength $ranges ] } {
                         append add_text $NO_NEWLINE_WARNING
                     }
                     append add_text \n
@@ -4146,7 +4183,7 @@ proc ::Yadt::Save_Current_Merges3 {} {
     for { set i 1 } { $i <= $num_diff } { incr i } {
 
         for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
-            set current_merges(merge$i,$j) $DIFF_INT(normal_merge$i,$j)
+            set current_merges(merge$i,$j) $DIFF_INT($OPTIONS(merge_mode)_merge$i,$j)
         }
     }
 
@@ -4626,12 +4663,14 @@ proc ::Yadt::Add_Lines {} {
 
             set every [ ::Yadt::Get_Diff_Update_Period $num_diff ]
 
+            set tk_wndsys [ tk windowingsystem ]
+
             for { set i 1 } { $i <= $num_diff } { incr i } {
                 set show 0
                 if { $every > 1 } {
                     if { [ expr $i % $every ] == 0 } {
                         set show 1
-                        if { [ tk windowingsystem ] != "aqua" } {
+                        if { $tk_wndsys != "aqua" } {
                             update
                         }
                     }
@@ -7310,25 +7349,28 @@ proc ::Yadt::Draw_Common_Toolbar_Elements {} {
         -text "Save" \
         -image saveImage \
         -takefocus 0 \
-        -state disabled \
+        -state normal \
         -style Toolbutton \
         -command [ list ::Yadt::Save_Merged_Files -caller $WIDGETS(tool_bar).save ]
     pack $WIDGETS(tool_bar).save -side left
     lappend elements $WIDGETS(tool_bar).save
 
-    ::ttk::button $WIDGETS(tool_bar).save_as \
-        -text "Save As..." \
-        -image saveAsImage \
-        -takefocus 0 \
-        -state normal \
-        -style Toolbutton \
-        -command [ list ::Yadt::Save_Merged_Files -save_as 1 -caller $WIDGETS(tool_bar).save_as ]
-    pack $WIDGETS(tool_bar).save_as -side left
+    if { 0 } {
+        # don't pack the button 'SaveAs' to prevent users from selecting a 
+        # wrong path for the merge result:
+        ::ttk::button $WIDGETS(tool_bar).save_as \
+            -text "Save As..." \
+            -image saveAsImage \
+            -takefocus 0 \
+            -state normal \
+            -style Toolbutton \
+            -command [ list ::Yadt::Save_Merged_Files -save_as 1 -caller $WIDGETS(tool_bar).save_as ]
+        pack $WIDGETS(tool_bar).save_as -side left
 
-    set WDG_OPTIONS(tooltip,$WIDGETS(tool_bar).save_as) \
-        "Save merged file as..."
-
-    lappend elements $WIDGETS(tool_bar).save_as
+        set WDG_OPTIONS(tooltip,$WIDGETS(tool_bar).save_as) \
+            "Save merged file as..."
+        lappend elements $WIDGETS(tool_bar).save_as
+    }
 
     ::ttk::button $WIDGETS(tool_bar).find \
         -text "Find" \
