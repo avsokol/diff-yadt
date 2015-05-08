@@ -1644,6 +1644,7 @@ proc ::Yadt::Check_Tags_Font { illegal_options } {
 
     foreach option [ array names OPTIONS ] {
         if [ ::Yadt::Is_Tag_Option $option ] {
+            if { $option == "lftag" } continue
             if [ ::Yadt::Remove_Key_From_Option $option -font ] {
                 lappend ill_opt $option
             }
@@ -1706,7 +1707,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.295 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.300 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -1850,6 +1851,8 @@ proc ::Yadt::Run {} {
     update
     ::Yadt::Diff_Center
     ::Yadt::Restore_Cursor [ concat $WIDGETS(window_name) $wdgs ]
+
+    set OPTIONS(current_merge_mode) $OPTIONS(merge_mode)
 
     # To establish file event when stdin handler must be called:
     if { $OPTIONS(external_call) } {
@@ -2172,25 +2175,8 @@ proc ::Yadt::Init_Graphic {} {
     variable ::Yadt::OPTIONS
     variable ::Yadt::WDG_OPTIONS
     variable ::Yadt::MAP_COLOR
-    global tcl_platform tk_version
 
-    if { $tcl_platform(platform) == "windows" } {
-        if { $tk_version >= 8.0 } {
-            set OPTIONS(default_font) "{{Lucida Console} 8}"
-            # Breaks if you're running
-            set OPTIONS(default_title_font) "{ Helvetica 12 bold }"
-            # Windows with a mono display.
-        } else {
-            # These XFDs are from Sun's font alias file
-            set OPTIONS(default_font) -misc-fixed-medium-r-normal--14-130-75-75-c-70-iso8859-1
-            set OPTIONS(default_title_font) -*-Helvetica-Bold-R-Normal-*-14-*
-        }
-    } else {
-        set OPTIONS(default_font) 6x13
-        set OPTIONS(default_title_font) -*-Helvetica-Bold-R-Normal-*-14-*
-        # Make menus and buttons prettier
-        option add *Font -*-Helvetica-Medium-R-Normal-*-12-*
-    }
+    ::Yadt::Define_Fonts
 
     if [ regexp "color" [ winfo visual . ] ] {
         array set MAP_COLOR {
@@ -2239,6 +2225,7 @@ proc ::Yadt::Init_Graphic {} {
             merge1tag  "-background $MAP_COLOR(bg,1) -foreground $MAP_COLOR(fg,1)"
             merge2tag  "-background $MAP_COLOR(bg,2) -foreground $MAP_COLOR(fg,2)"
             merge3tag  "-background $MAP_COLOR(bg,3) -foreground $MAP_COLOR(fg,3)"
+            lftag      "-background darkgrey -foreground black -font $OPTIONS(default_italic_font)"
         } ]
     } else {
         array set MAP_COLOR {
@@ -2267,6 +2254,7 @@ proc ::Yadt::Init_Graphic {} {
             merge1tag  "-background $MAP_COLOR(bg,1) -foreground $MAP_COLOR(fg,1)"
             merge2tag  "-background $MAP_COLOR(bg,2) -foreground $MAP_COLOR(fg,2)"
             merge3tag  "-background $MAP_COLOR(bg,3) -foreground $MAP_COLOR(fg,3)"
+            lftag      "-background darkgrey -foreground black -font $OPTIONS(default_italic_font)"
         } ]
     }
 
@@ -2294,6 +2282,58 @@ proc ::Yadt::Init_Graphic {} {
     set WDG_OPTIONS(yadt_x_default) $WDG_OPTIONS(yadt_x)
     set WDG_OPTIONS(yadt_y_default) $WDG_OPTIONS(yadt_y)
     set OPTIONS(geometry) $WDG_OPTIONS(yadt_width)x$WDG_OPTIONS(yadt_height)
+}
+
+#===============================================================================
+
+proc ::Yadt::Define_Fonts {} {
+
+    global tcl_platform
+    variable ::Yadt::OPTIONS
+
+    switch -- $tcl_platform(platform) {
+        unix {
+            switch -- $tcl_platform(os) {
+                Linux {
+                    set isize 9
+                    set fsize 10
+                    set tsize 12
+                }
+                Darwin {
+                    set isize 9
+                    set fsize 10
+                    set tsize 12
+                }
+                default {
+                    return -code error "Unsupported platform os: <$tcl_platform(os)>"
+                }
+            }
+
+            if [ catch {
+                set font_family "Lucida Console"
+                set defFont    [ font create -family $font_family -size $fsize -slant roman  -underline 0 -weight normal ]
+                set titleFont  [ font create -family $font_family -size $tsize -slant roman  -underline 0 -weight bold ]
+                set italicFont [ font create -family $font_family -size $isize -slant italic -underline 0 -weight normal ]
+            } ] {
+                set font_family [ font configure TkFixedFont -family ]
+                set defFont    [ font create -family $font_family -size $fsize -slant roman  -underline 0 -weight normal ]
+                set titleFont  [ font create -family $font_family -size $tsize -slant roman  -underline 0 -weight bold ]
+                set italicFont [ font create -family $font_family -size $isize -slant italic -underline 0 -weight normal ]
+            }
+        }
+        windows {
+            set defFont "{{Lucida Console} 8}"
+            set titleFont "{ Helvetica 12 bold }"
+            set italicFont "{{Lucida Console} 8 italic}"
+        }
+        default {
+            return -code error "Unsupported platform: <$tcl_platform(platform)>"
+        }
+    }
+
+    set OPTIONS(default_font) $defFont
+    set OPTIONS(default_title_font) $titleFont
+    set OPTIONS(default_italic_font) $italicFont 
 }
 
 #===============================================================================
@@ -3234,7 +3274,6 @@ proc ::Yadt::Update_Num_Lines {} {
     variable ::Yadt::TEXT_WDG
     variable ::Yadt::TEXT_NUM_WDG
     variable ::Yadt::TEXT_INFO_WDG
-    variable ::Yadt::NOLF
 
     set min_num 0
 
@@ -3279,7 +3318,7 @@ proc ::Yadt::Update_Num_Lines {} {
 
 #===============================================================================
 
-proc ::Yadt::Collect_Diff3_From_Lcs { prev_idx_arr idx_arr diff_count } {
+proc ::Yadt::Collect_Diff3_From_Lcs { prev_idx_arr idx_arr diff_count warn } {
 
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::DIFF_INT
@@ -3287,6 +3326,7 @@ proc ::Yadt::Collect_Diff3_From_Lcs { prev_idx_arr idx_arr diff_count } {
     upvar $prev_idx_arr prev_idx
     upvar $idx_arr idx
     upvar $diff_count count
+    upvar $warn warning
 
     if { $idx(1) <= [ expr $prev_idx(1) + 1 ] && \
              $idx(2) <= [ expr $prev_idx(2) + 1 ] && \
@@ -3316,7 +3356,7 @@ proc ::Yadt::Collect_Diff3_From_Lcs { prev_idx_arr idx_arr diff_count } {
             [ ::YadtDiff3::Analyze_Diff3 $count $i $ds($i)$op($i) ]
     }
 
-    ::YadtDiff3::Set_Which_File_For_Diff_Id $count [ ::YadtDiff3::Find_Which_File_For_Diff_Id $count ]
+    ::YadtDiff3::Set_Which_File_For_Diff_Id $count [ ::YadtDiff3::Find_Which_File_For_Diff_Id $count warning ]
 }
 
 #===============================================================================
@@ -3627,6 +3667,8 @@ proc ::Yadt::Merge2_By_Method { new_method args } {
     set method_len [ string length $new_method ]
     set m_num 0
 
+    set nolf 0
+
     foreach i [ split $new_method {} ] {
         incr m_num
 
@@ -3638,12 +3680,12 @@ proc ::Yadt::Merge2_By_Method { new_method args } {
             set add_text [ $TEXT_WDG($i) get $start.0 $start.0+$new_lines($i)lines-[ string length $NO_NEWLINE_WARNING ]char-1char ]
             if { $m_num == $method_len } {
                 append add_text $NO_NEWLINE_WARNING
+                set nolf 1
             }
             append add_text \n
         } else {
             set add_text [ $TEXT_WDG($i) get $start.0 $start.0+$new_lines($i)lines ]
         }
-
         append newtext $add_text
     }
 
@@ -3657,6 +3699,12 @@ proc ::Yadt::Merge2_By_Method { new_method args } {
     ::Yadt::Enable_Merge_Info_Wdg
     $MERGE_INFO_WDG(2) insert mark${diff_id} $info_lines diff
     ::Yadt::Disable_Merge_Info_Wdg
+
+    if { $nolf } {
+        set start [ $MERGE_TEXT_WDG(2) index end-1lines-1char-[ string length $NO_NEWLINE_WARNING ]char  ]
+        set end [ $MERGE_TEXT_WDG(2) index "end-1lines-1char-[ string length $NO_NEWLINE_WARNING ]char lineend" ]
+        $MERGE_TEXT_WDG(2) tag add lftag $start $end
+    }
     update
 
     # Coloring merge preview
@@ -3789,6 +3837,7 @@ proc ::Yadt::Merge_Diff3_By_Method { target new_method args } {
 
     set method_len [ string length $new_method ]
     set m_num 0
+    set nolf($target) 0
 
     foreach i [ split $new_method {} ] {
         incr m_num
@@ -3803,12 +3852,12 @@ proc ::Yadt::Merge_Diff3_By_Method { target new_method args } {
                 set add_text [ $TEXT_WDG($i) get $j.0 $j.0+1lines-[ string length $NO_NEWLINE_WARNING ]char-1char ]
                 if { $m_num == $method_len } {
                     append add_text $NO_NEWLINE_WARNING
+                    set nolf($target) 1
                 }
                 append add_text \n
             } else {
                 set add_text [ $TEXT_WDG($i) get $j.0 $j.0+1lines ]
             }
-
             append addtext $add_text
         }
 
@@ -3827,6 +3876,12 @@ proc ::Yadt::Merge_Diff3_By_Method { target new_method args } {
     # Actually inserting newtext in merge widget
     $MERGE_TEXT_WDG($target) insert mark${target}_$diff_id $newtext diff
     $MERGE_INFO_WDG($target) insert mark${target}_$diff_id $info_lines diff
+
+    if { $nolf($target) } {
+        set start [ $MERGE_TEXT_WDG($target) index end-1lines-1char-[ string length $NO_NEWLINE_WARNING ]char  ]
+        set end [ $MERGE_TEXT_WDG($target) index "end-1lines-1char-[ string length $NO_NEWLINE_WARNING ]char lineend" ]
+        $MERGE_TEXT_WDG($target) tag add lftag $start $end
+    }
     update
 
     set DIFF_INT(method$diff_id,$target) normal
@@ -3873,17 +3928,15 @@ proc ::Yadt::Merge_Range3_By_Method { target new_method args } {
             "mark${target}_$r_id+${oldlines}lines"
     }
 
-    set newlines 0
-    set newtext ""
-
     lassign [ ::Yadt::Get_Diff_Scr_Params $diff_id ] start end type
     if { $start == -1 && $end == -1 && $type == -1 } return
 
-    set r_num 0
-    set ranges [ ::YadtDiff3::Get_Ranges_For_Diff_Id $r_id ]
-    foreach range $ranges {
+    set newlines 0
+    set newtext ""
+    set nolf($target) 0
+    set add_nolf_warn 0
 
-        incr r_num
+    foreach range [ ::YadtDiff3::Get_Ranges_For_Diff_Id $r_id ] {
         lassign [ ::YadtDiff3::Get_Range $range ] r_start r_end r_type
 
         set method $DIFF_INT(expert_merge$range,$target)
@@ -3909,22 +3962,28 @@ proc ::Yadt::Merge_Range3_By_Method { target new_method args } {
 
                 # Here we also consider different LF in compared files
                 set last [ ::Yadt::Is_Last_Line_Envolved $r_id $i last_line($i) ]
-
                 if { $NOLF(global) && $NOLF($i) && $last && $last_line($i) == $f_line($i) } {
                     set add_text [ $TEXT_WDG($i) get $j.0 $j.0+1lines-[ string length $NO_NEWLINE_WARNING ]char-1char ]
-                    if { $m_num == $method_len && $r_num == [ llength $ranges ] } {
-                        append add_text $NO_NEWLINE_WARNING
+                    if { $m_num == $method_len } {
+                        if { $nolf($target) == 0 } {
+                            set add_nolf_warn 1
+                            set nolf($target) 1
+                        }
                     }
                     append add_text \n
                 } else {
                     set add_text [ $TEXT_WDG($i) get $j.0 $j.0+1lines ]
                 }
-
                 append addtext $add_text
             }
 
             append newtext $addtext
         }
+    }
+
+    if { $add_nolf_warn } {
+        set newtext [ string trimright $newtext ]
+        append newtext $NO_NEWLINE_WARNING\n
     }
 
     set info_lines {}
@@ -3935,6 +3994,11 @@ proc ::Yadt::Merge_Range3_By_Method { target new_method args } {
     # Actually inserting newtext in merge widget
     $MERGE_TEXT_WDG($target) insert mark${target}_$r_id $newtext diff
     $MERGE_INFO_WDG($target) insert mark${target}_$r_id $info_lines diff
+    if { $nolf($target) } {
+        set start [ $MERGE_TEXT_WDG($target) index end-1lines-1char-[ string length $NO_NEWLINE_WARNING ]char  ]
+        set end [ $MERGE_TEXT_WDG($target) index "end-1lines-1char-[ string length $NO_NEWLINE_WARNING ]char lineend" ]
+        $MERGE_TEXT_WDG($target) tag add lftag $start $end
+    }
     update
 
     set DIFF_INT(method$r_id,$target) expert
@@ -4582,7 +4646,7 @@ proc ::Yadt::Prepare_Mark_Diffs {} {
     variable ::Yadt::WIDGETS
     variable ::Yadt::MAP_COLOR
 
-    foreach tag { currtag textcurrtag difftag deltag instag inlinetag inlineinstag inlinechgtag chgtag overlaptag sel } {
+    foreach tag { currtag textcurrtag difftag deltag instag inlinetag inlineinstag inlinechgtag chgtag overlaptag sel lftag } {
         foreach win [ concat [ ::Yadt::Get_Diff_Wdg_List ] $WIDGETS(diff_lines_text) ] {
             $win tag configure $tag {*}$OPTIONS($tag)
         }
@@ -4627,6 +4691,7 @@ proc ::Yadt::Add_Lines {} {
         }
 
         3 {
+            set warn {}
             foreach { lines(1) lines(2) lines(3) } $LCSDATA(unchanged) { }
 
             for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
@@ -4641,7 +4706,7 @@ proc ::Yadt::Add_Lines {} {
                     set idx($j) [ lindex $lines($j) $i ]
                 }
 
-                ::Yadt::Collect_Diff3_From_Lcs prev_idx idx count
+                ::Yadt::Collect_Diff3_From_Lcs prev_idx idx count warn
                 set prev_idx(1) $idx(1)
                 set prev_idx(2) $idx(2)
                 set prev_idx(3) $idx(3)
@@ -4652,7 +4717,7 @@ proc ::Yadt::Add_Lines {} {
                 set prev_idx($j) $idx($j)
                 set idx($j) [ llength $DIFF_FILES(strings,$j) ]
             }
-            ::Yadt::Collect_Diff3_From_Lcs prev_idx idx count
+            ::Yadt::Collect_Diff3_From_Lcs prev_idx idx count warn
 
             set num_diff [ ::YadtDiff3::Get_Diff_Num ]
             set DIFF_INT(count) 0
@@ -4701,6 +4766,14 @@ proc ::Yadt::Add_Lines {} {
             ::YadtDiff3::Append_Final_Lcs_Lines fnum
 
             set diff_num $DIFF_INT(count)
+
+            if [ llength $warn ] {
+                ::Yadt::Msg_Box "Warning" \
+                    "There was an error processing differences:\
+                    \n[ join $warn \n ]" \
+                    "ok" \
+                    "warning"
+            }
         }
     }
 
@@ -4794,7 +4867,7 @@ proc ::Yadt::Update_Merge_Marks {} {
         $MERGE_INFO_WDG($i) tag delete {*}[ $MERGE_INFO_WDG($i) tag names ]
     }
 
-    foreach tag { merge1tag merge2tag merge3tag textcurrtag sel } {
+    foreach tag { merge1tag merge2tag merge3tag textcurrtag sel lftag } {
         foreach win [ ::Yadt::Get_Merge_Wdg_List ] {
             $win tag configure $tag {*}$OPTIONS($tag)
         }
@@ -4920,8 +4993,14 @@ proc ::Yadt::Set_Diffs_Merge_Marks {} {
 proc ::Yadt::Set_All_Tags {} {
 
     variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::MERGE_START
     variable ::Yadt::DIFF2
     variable ::Yadt::OPTIONS
+    variable ::Yadt::TEXT_WDG
+    variable ::Yadt::TEXT_NUM_WDG
+    variable ::Yadt::MERGE_TEXT_WDG
+    variable ::Yadt::NO_NEWLINE_WARNING
+    variable ::Yadt::NOLF
 
     switch -- $DIFF_TYPE {
         2 {
@@ -4944,6 +5023,27 @@ proc ::Yadt::Set_All_Tags {} {
     }
 
     ::Yadt::Toggle_Inline_Tags
+
+    if { $NOLF(global) } {
+        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+            if { $NOLF($i) } {
+                set num_cnt($i) [ $TEXT_NUM_WDG($i) get 1.0 end ]
+                set num_end($i) [ lindex [ string trim $num_cnt($i) ] end ]
+
+                set line [ expr [ lsearch [ split $num_cnt($i) \n ] $num_end($i) ] + 1 ]
+                set start($i)  [ $TEXT_WDG($i) index "$line.0+1line-1char-[ string length $NO_NEWLINE_WARNING ]char" ]
+                set end($i) [ $TEXT_WDG($i) index "$start($i) lineend" ]
+
+                $TEXT_WDG($i) tag add lftag $start($i) $end($i)
+            }
+        }
+
+        for { set j $MERGE_START } { $j <= $DIFF_TYPE } { incr j } {
+            set start($j) [ $MERGE_TEXT_WDG($j) index end-1lines-1char-[ string length $NO_NEWLINE_WARNING ]char  ]
+            set end($j) [ $MERGE_TEXT_WDG($j) index "end-1lines-1char-[ string length $NO_NEWLINE_WARNING ]char lineend" ]
+            $MERGE_TEXT_WDG($j) tag add lftag $start($j) $end($j)
+        }
+    }
 }
 
 #===============================================================================
@@ -5504,6 +5604,7 @@ proc ::Yadt::Define_Tags_Priority {} {
         $element tag raise inlineinstag
         $element tag raise inlinechgtag
         $element tag raise instag
+        $element tag raise lftag
     }
 
     foreach element [ concat [ ::Yadt::Get_Diff_Wdg_List ] \
@@ -9422,6 +9523,10 @@ proc ::Yadt::Toggle_Merge_Mode {} {
         return
     }
 
+    if { $OPTIONS(current_merge_mode) == $OPTIONS(merge_mode) } {
+        return
+    }
+
     switch -- $OPTIONS(merge_mode) {
         normal {
             set DIFF_INT(pos) [ ::YadtDiff3::Get_Diff_Id_For_Range $DIFF_INT(pos) ]
@@ -9435,6 +9540,7 @@ proc ::Yadt::Toggle_Merge_Mode {} {
     ::Yadt::Set_Diff_Combo_Values
     ::Yadt::Set_Diff_Indicator $DIFF_INT(pos) 0 1
 
+    set OPTIONS(current_merge_mode) $OPTIONS(merge_mode)
     set TMP_OPTIONS(merge_mode) $OPTIONS(merge_mode)
 }
 
@@ -10318,7 +10424,7 @@ proc ::Yadt::Update_Center_Map_Diff_Combo_State { diff_id num_diff } {
         }
         "normal" {
             set i [ expr $diff_id - 1 ]
-            $WIDGETS(diff_combo) current $i
+            catch { $WIDGETS(diff_combo) current $i }
             $WIDGETS(diff_combo) selection clear
         }
     }
@@ -10675,11 +10781,10 @@ proc ::Yadt::Draw_Advanced_Options_Tab { wdg } {
         ::Yadt::Pref_Radio_Button [ $wdg.translation getframe ] translation $param_value -state normal
     }
 
-    TitleFrame $wdg.merge_options -text "Merge File Options" -relief groove -bd 2 -side left
+
+    TitleFrame $wdg.merge_options -text "Merged File Options" -relief groove -bd 2 -side left
     pack $wdg.merge_options -side top -fill x -expand 0 -padx 2 -pady 2
-
     set frame1 [ $wdg.merge_options getframe ]
-
     ::Yadt::Pref_Check_Button $frame1 backup_merged
 }
 
@@ -11802,75 +11907,37 @@ proc ::Yadt::Draw_Help_Wdg { help_name action { text "" } } {
 
 proc ::Yadt::Prepare_Help_Tags { widget } {
 
-    global tk_version
+    $widget configure -font { Helvetica 10 }
 
-    if { $tk_version >= 8.0 } {
-        $widget configure -font { Helvetica 10 }
+    $widget tag configure bld \
+        -font { Helvetica 10 bold }
 
-        $widget tag configure bld \
-            -font { Helvetica 10 bold }
+    $widget tag configure cmp \
+        -font { Courier 10 bold }
 
-        $widget tag configure cmp \
-            -font { Courier 10 bold }
+    $widget tag configure hdr \
+        -font { Helvetica 14 bold } \
+        -underline 1
 
-        $widget tag configure hdr \
-            -font { Helvetica 14 bold } \
-            -underline 1
+    $widget tag configure itl \
+        -font { Times 10 italic }
 
-        $widget tag configure itl \
-            -font { Times 10 italic }
+    $widget tag configure btn \
+        -font { Courier 9 } \
+        -foreground black \
+        -background white \
+        -relief groove \
+        -borderwidth 2
 
-        $widget tag configure btn \
-            -font { Courier 9 } \
-            -foreground black \
-            -background white \
-            -relief groove \
-            -borderwidth 2
+    $widget tag configure cmd \
+        -font { Courier 9 } \
+        -foreground black \
+        -background white
 
-        $widget tag configure cmd \
-            -font { Courier 9 } \
-            -foreground black \
-            -background white
-
-        $widget tag configure ttl \
-            -font { Helvetica 14 bold } \
-            -foreground blue \
-            -justify center
-
-    } else {
-        $widget configure \
-            -font -*-Helvetica-Medium-R-Normal-*-14-*
-
-        $widget tag configure bld \
-            -font -*-Helvetica-Bold-R-Normal-*-14-*
-
-        $widget tag configure cmp \
-            -font -*-Courier-Medium-R-Normal-*-14-*
-
-        $widget tag configure hdr \
-            -font -*-Helvetica-Bold-R-Normal-*-18-* \
-            -underline 1
-
-        $widget tag configure itl \
-            -font -*-Times-Medium-I-Normal-*-14-*
-
-        $widget tag configure btn \
-            -font -*-Courier-Medium-R-Normal-*-12-* \
-            -foreground black \
-            -background white \
-            -relief groove \
-            -borderwidth 2
-
-        $widget tag configure cmd \
-            -font -*-Courier-Medium-R-Normal-*-12-* \
-            -foreground black \
-            -background white
-
-        $widget tag configure ttl \
-            -font -*-Helvetica-Bold-R-Normal-*-18-* \
-            -foreground blue\
-            -justify center
-    }
+    $widget tag configure ttl \
+        -font { Helvetica 14 bold } \
+        -foreground blue \
+        -justify center
 }
 
 #===============================================================================
