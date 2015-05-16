@@ -605,10 +605,12 @@ proc ::YadtDiff3::Get_Border_Ranges { start diff_size shift } {
     upvar $diff_size size
     upvar $shift full_shift
 
-    set shifted_size_max [ ::CmnTools::MaxN \
-                               [ expr $size(1) + $full_shift(1) ] \
-                               [ expr $size(2) + $full_shift(2) ] \
-                               [ expr $size(3) + $full_shift(3) ] ]
+    set sizes {}
+    for { set i 1 } { $i <= [ ::Yadt::Get_Diff_Type ] } { incr i } {
+        lappend sizes [ expr $size($i) + $full_shift($i) ]
+    }
+
+    set shifted_size_max [ ::CmnTools::MaxN {*}$sizes ]
 
     set r_start [ expr $s(1) + [ ::Yadt::Get_Current_Delta 1 ] ]
     set r_end   [ expr $r_start + $shifted_size_max - 1 ]
