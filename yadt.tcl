@@ -527,6 +527,8 @@ proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
     # Note, that for cvs and diff3 (DIFF_TYPE =3) we always use -file for output_file_content_to as
     # it is not possible to use "cvs diff" for comparing 3 revisions
 
+    set DIFF_FILES(orig_path,$index) $filename
+
     set output_file_content_to -file
     if { $DIFF_TYPE == 2 && $OPTIONS(use_cvs_diff) && $OPTIONS(vcs) == "cvs" } {
         set output_file_content_to -variable
