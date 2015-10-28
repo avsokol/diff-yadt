@@ -319,10 +319,6 @@ proc ::YadtDiff2::Align_Non_Empty_Diff2 { diff_id lcs start diff_type diff_size 
         set current_delta($i) [ ::Yadt::Get_Current_Delta $i ]
     }
 
-    if { $diff_id == 82 } {
-        parray lcsdata
-    }
-
     foreach f_line(1) $lcsdata(12,1) {
         set idx(2) [ lsearch $lcsdata(12,1) $f_line(1) ]
         set f_line(2) [ lindex $lcsdata(12,2) $idx(2) ]
