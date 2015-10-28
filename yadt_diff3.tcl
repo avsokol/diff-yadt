@@ -94,33 +94,14 @@ variable ::YadtDiff3::DIFF3
 # DIFF3(3,2,diff) = 262,263c - taken from 2:262,263c
 # DIFF3(3,3,diff) = 772,774c - taken from 3:772,774c
 
-# Ranges inside diff3 variables - used for expert merge mode
-# RANGES:
-#     keys - ranges id,
-#     values - list of range's 'start_line end_line type'
-# RANGES2DIFF:
-#     keys - ranges id,
-#     values 'diff_id', diff3 id, which correspond to current range
-# DIFFS2RANGES:
-#     keys - diff_id, normal diff3_id
-#     values - list of ranges id, which are inside of this diff3 id
-variable ::YadtDiff3::RANGES
-variable ::YadtDiff3::RANGES2DIFF
-variable ::YadtDiff3::DIFF2RANGES
-
 #===============================================================================
 
 proc ::YadtDiff3::Wipe {} {
 
     variable ::YadtDiff3::DIFF3
-    variable ::YadtDiff3::RANGES
-    variable ::YadtDiff3::RANGES2DIFF
-    variable ::YadtDiff3::DIFF2RANGES
 
     array unset DIFF3
-    array unset RANGES
-    array unset RANGES2DIFF
-    array unset DIFF2RANGES
+    ::YadtRange::Wipe
 }
 
 #===============================================================================
@@ -151,9 +132,9 @@ proc ::YadtDiff3::Find_Which_File_For_Diff_Id { diff_id warn } {
 
     upvar $warn warning
 
-    lassign [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id 1 lf1 ] str1 dummy
-    lassign [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id 2 lf2 ] str2 dummy
-    lassign [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id 3 lf3 ] str3 dummy
+    lassign [ ::Yadt::Gather_File_Strings_By_Diff3_Id $diff_id 1 lf1 ] str1 dummy
+    lassign [ ::Yadt::Gather_File_Strings_By_Diff3_Id $diff_id 2 lf2 ] str2 dummy
+    lassign [ ::Yadt::Gather_File_Strings_By_Diff3_Id $diff_id 3 lf3 ] str3 dummy
 
     if { $str1 == $str2 && $str1 == $str3 } {
         if { $lf1 == $lf2 && $lf1 == $lf3 } {
@@ -303,7 +284,7 @@ proc ::YadtDiff3::Get_Bs_Lcs_For_Diff_Id { diff_id args } {
     set ignore_blanks [ ::CmnTools::Get_Arg -ignore_blanks args -default 1 ]
 
     for { set i 1 } { $i <= [ ::Yadt::Get_Diff_Type ] } { incr i } {
-        lassign [ ::Yadt::Gather_File_Strings_By_Diff_Id $diff_id $i ] str($i) str_bs($i)
+        lassign [ ::Yadt::Gather_File_Strings_By_Diff3_Id $diff_id $i ] str($i) str_bs($i)
     }
 
     if { $ignore_blanks } {
@@ -412,216 +393,9 @@ proc ::YadtDiff3::Align_One_Diff3 { diff_id } {
 
 #===============================================================================
 
-proc ::YadtDiff3::Get_Ranges_Num {} {
-
-    variable ::YadtDiff3::RANGES
-
-    return [ llength [ array names RANGES ] ]
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Get_Range { idx args } {
-
-    variable ::YadtDiff3::RANGES
-
-    set is_exists [ ::CmnTools::Get_Arg -exists args -exists ]
-
-    if { $is_exists } {
-        return [ info exists RANGES($idx) ]
-    }
-
-    return $RANGES($idx)
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Set_Range { idx start end type } {
-
-    variable ::YadtDiff3::RANGES
-
-    set RANGES($idx) [ list $start $end $type ]
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Append_Border_Ranges { up_ranges start end } {
-
-    upvar $up_ranges ranges
-
-    if ![ llength $ranges ] {
-        set ranges "$start $end"
-        return
-    }
-
-    if { $start < [ lindex $ranges 0 ] } {
-        set ranges [ concat $start [ expr [ lindex $ranges 0 ] - 1 ] $ranges ]
-    }
-    if { $end > [ lindex $ranges end ] } {
-        set ranges [ concat $ranges [ expr [ lindex $ranges end ] + 1 ] $end ]
-    }
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Combine_Ranges { up_ranges diff_id } {
-
-    upvar $up_ranges ranges
-
-    set ranges [ ::YadtDiff3::Sort_Ranges $ranges ]
-
-    set new_ranges {}
-    
-    foreach { s e } $ranges {
-        if { ![ info exists start ] && ![ info exists end ] } {
-            set start $s
-            set end $e
-            continue
-        }
-
-        if { $e < $start } {
-            lappend new_ranges $s $e
-            set start $s
-            set end $e
-            continue
-        }
-
-        if { $s > $end } {
-            lappend new_ranges $start $end
-            set start $s
-            set end $e
-            continue
-        }
-
-        if { $s <= $end } {
-            if { $s > $start } {
-                lappend new_ranges $start [ expr $s - 1 ]
-            }
-            if { $e < $end } {
-                lappend new_ranges $s $e
-                set start [ expr $e + 1 ]
-                continue
-            }
-            if { $e == $end } {
-                lappend new_ranges $s $e
-                unset start
-                unset end
-                continue
-            }
-
-            if { $e > $end } {
-                lappend new_ranges $s [ expr $end ]
-                set start [ expr $end + 1 ]
-                set end $e
-                continue
-            }
-        }
-    }
-
-    if { [ info exists start ] && [ info exists end ] } {
-        lappend new_ranges $start $end
-    }
-
-    if { $ranges == $new_ranges } {
-        return
-    }
-
-    set ranges $new_ranges
-    Combine_Ranges ranges $diff_id
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Sort_Ranges { ranges } {
-
-    set tmp_ranges {}
-
-    foreach { s e } $ranges {
-        lappend tmp_ranges [ list $s $e ]
-    }
-
-    set ranges [ join [ lsort -unique -integer -increasing -index 0 $tmp_ranges ] ]
-
-    return $ranges
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Remove_Range { up_ranges start end } {
-
-    upvar $up_ranges ranges
-
-    set new_ranges {}
-
-    foreach { s e } $ranges {
-        if { $s == $start && $e == $end } continue
-        lappend new_ranges $s $e
-    }
-
-    set ranges $new_ranges
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Split_Region_By_Ranges { start end ranges } {
-
-    set new_ranges {}
-
-    set prev_r_start $start
-    set prev_r_end [ expr [ lindex $ranges 0 ] - 1 ]
-
-    if { $prev_r_start <= $prev_r_end } {
-        lappend new_ranges $prev_r_start $prev_r_end
-    } else {
-        set prev_r_end $prev_r_start
-    }
-
-    set r_end $end
-
-    foreach [ list r_start r_end ] $ranges {
-
-        if { $prev_r_end < [ expr $r_start - 1 ] } {
-            lappend new_ranges [ expr $prev_r_end + 1 ] [ expr $r_start - 1 ]
-        }
-
-        lappend new_ranges $r_start $r_end
-
-        set prev_r_start $r_start
-        set prev_r_end $r_end
-    }
-
-    if { $r_end < $end } {
-        lappend new_ranges [ expr $r_end + 1 ] $end
-    }
-
-    return $new_ranges
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Get_Border_Ranges { start diff_size shift } {
-
-    upvar $start s
-    upvar $diff_size size
-    upvar $shift full_shift
-
-    set sizes {}
-    for { set i 1 } { $i <= [ ::Yadt::Get_Diff_Type ] } { incr i } {
-        lappend sizes [ expr $size($i) + $full_shift($i) ]
-    }
-
-    set shifted_size_max [ ::CmnTools::MaxN {*}$sizes ]
-
-    set r_start [ expr $s(1) + [ ::Yadt::Get_Current_Delta 1 ] ]
-    set r_end   [ expr $r_start + $shifted_size_max - 1 ]
-    return [ list $r_start $r_end ]
-}
-
-#===============================================================================
-
 proc ::YadtDiff3::Create_Screen_Ranges { ranges diff_id start end type } {
 
-    set ranges_num [ ::YadtDiff3::Get_Ranges_Num ]
+    set ranges_num [ ::YadtRange::Get_Ranges_Num ]
 
     if { [ llength $ranges ] == 2 && \
              [ lindex $ranges 0 ] == $start && \
@@ -630,92 +404,18 @@ proc ::YadtDiff3::Create_Screen_Ranges { ranges diff_id start end type } {
         # Split ranges by 1 line
         for { set i $start } { $i <= $end } { incr i } {
             incr ranges_num
-            ::YadtDiff3::Set_Range $ranges_num $i $i $type
-            ::YadtDiff3::Set_Diff_Id_For_Range $ranges_num $diff_id
-            ::YadtDiff3::Append_Range_To_Diff_Id $diff_id $ranges_num
+            ::YadtRange::Set_Range $ranges_num $i $i $type
+            ::YadtRange::Set_Diff_Id_For_Range $ranges_num $diff_id
+            ::YadtRange::Append_Range_To_Diff_Id $diff_id $ranges_num
         }
     } else {
         # Get all ranges inside diff
-        set scr_ranges [ ::YadtDiff3::Split_Region_By_Ranges $start $end $ranges ]
+        set scr_ranges [ ::YadtRange::Split_Region_By_Ranges $start $end $ranges ]
         foreach [ list r_start r_end ] $scr_ranges {
             incr ranges_num
-            ::YadtDiff3::Set_Range $ranges_num $r_start $r_end $type
-            ::YadtDiff3::Set_Diff_Id_For_Range $ranges_num $diff_id
-            ::YadtDiff3::Append_Range_To_Diff_Id $diff_id $ranges_num
-        }
-    }
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Get_Diff_Id_For_Range { range_id } {
-
-    variable ::YadtDiff3::RANGES2DIFF
-
-    if { $range_id == 0 } {
-        return 0
-    }
-
-    return $RANGES2DIFF($range_id)
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Set_Diff_Id_For_Range { range_id diff_id } {
-
-    variable ::YadtDiff3::RANGES2DIFF
-
-    set RANGES2DIFF($range_id) $diff_id
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Append_Range_To_Diff_Id { diff_id range } {
-
-    variable ::YadtDiff3::DIFF2RANGES
-
-    lappend DIFF2RANGES($diff_id) $range
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Get_Ranges_For_Diff_Id { diff_id } {
-
-    variable ::YadtDiff3::DIFF2RANGES
-
-    if { $diff_id == 0 } {
-        return {}
-    }
-
-    return $DIFF2RANGES($diff_id)
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Get_Top_Range_For_Diff_Id { diff_id } {
-
-    variable ::YadtDiff3::DIFF2RANGES
-
-    if { $diff_id == 0 } {
-        return 0
-    }
-
-    return [ lindex $DIFF2RANGES($diff_id) 0 ]
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Add_Info_Strings_In_Range { start diff_size ch_text } {
-
-    upvar $start s
-    upvar $diff_size size
-    upvar $ch_text change_text
-
-    for { set i 1 } { $i <= [ ::Yadt::Get_Diff_Type ] } { incr i } {
-        for { set j 0 } { $j < $size($i) } { incr j } {
-            set line($i) [ expr $s($i) + $j ]
-            set wdg [ ::Yadt::Get_Diff_Wdg_List $i "info" ]
-            $wdg insert $line($i).0 $change_text($i)
+            ::YadtRange::Set_Range $ranges_num $r_start $r_end $type
+            ::YadtRange::Set_Diff_Id_For_Range $ranges_num $diff_id
+            ::YadtRange::Append_Range_To_Diff_Id $diff_id $ranges_num
         }
     }
 }
@@ -728,29 +428,8 @@ proc ::YadtDiff3::Add_Diff3_Info_Strings {} {
 
     for { set diff_id 1 } { $diff_id <= $num_diff } { incr diff_id } {
         ::YadtDiff3::Get_Diff3_Params $diff_id thisdiff s e type size change_text
-        ::YadtDiff3::Add_Info_Strings_In_Range s size change_text
+        ::YadtRange::Add_Info_Strings_In_Range s size change_text
     }
-}
-
-#===============================================================================
-
-proc ::YadtDiff3::Move_Lines { lines shift_up ch_text } {
-
-    upvar $lines ln
-    upvar $shift_up shift
-    upvar $ch_text change_text
-
-    for { set i 1 } { $i <= [ ::Yadt::Get_Diff_Type ] } { incr i } {
-        for { set j 0 } { $j < $shift($i) } { incr j } {
-            set mv_line $ln($i)
-
-            foreach t_wdg [ ::Yadt::Get_Diff_Wdg_List $i ] {
-                $t_wdg insert $mv_line.0 "\n"
-            }
-        }
-    }
-
-    ::YadtDiff3::Add_Info_Strings_In_Range ln shift change_text
 }
 
 #===============================================================================
@@ -802,12 +481,12 @@ proc ::YadtDiff3::Align_Two_Third_Empty_Diff3 { diff_id id1 start diff_type diff
     set shift($id2) $size($id1)
     set shift($id3) $size($id1)
 
-    ::YadtDiff3::Move_Lines scr_line shift change_text
+    ::YadtRange::Move_Lines scr_line shift change_text
     for { set i 1 } { $i <= $diff_type } { incr i } {
         incr full_shift($i) $shift($i)
     }
 
-    lassign [ ::YadtDiff3::Get_Border_Ranges s size full_shift ] r_start r_end
+    lassign [ ::YadtRange::Get_Border_Ranges s size full_shift ] r_start r_end
     lappend ranges $r_start $r_end
 
     for { set i 1 } { $i <= $diff_type } { incr i } {
@@ -889,7 +568,7 @@ proc ::YadtDiff3::Align_One_Third_Empty_Diff3 { diff_id id3 lcs start diff_type 
                 lappend ranges $scr_line($id2) [ expr $scr_line($id2) + $shift($id2) - 1 ]
             }
 
-            ::YadtDiff3::Move_Lines scr_line shift change_text
+            ::YadtRange::Move_Lines scr_line shift change_text
             incr full_shift($id1) $shift($id1)
             incr full_shift($id2) $shift($id2)
         }
@@ -907,13 +586,13 @@ proc ::YadtDiff3::Align_One_Third_Empty_Diff3 { diff_id id3 lcs start diff_type 
     set shift($id2) [ expr $max_shift - $size($id2) - $full_shift($id2) ]
     set shift($id3) $max_shift
 
-    ::YadtDiff3::Move_Lines scr_line shift change_text
+    ::YadtRange::Move_Lines scr_line shift change_text
     for { set i 1 } { $i <= $diff_type } { incr i } {
         incr full_shift($i) $shift($i)
     }
 
-    lassign [ ::YadtDiff3::Get_Border_Ranges s size full_shift ] r_start r_end
-    ::YadtDiff3::Append_Border_Ranges ranges $r_start $r_end
+    lassign [ ::YadtRange::Get_Border_Ranges s size full_shift ] r_start r_end
+    ::YadtRange::Append_Border_Ranges ranges $r_start $r_end
 
     for { set i 1 } { $i <= $diff_type } { incr i } {
         ::Yadt::Incr_Delta $i $full_shift($i)
@@ -1003,7 +682,7 @@ proc ::YadtDiff3::Align_Conflict { diff_id lcs start diff_type diff_size ch_text
             }
 
             if { $move } {
-                ::YadtDiff3::Move_Lines scr_line shift change_text
+                ::YadtRange::Move_Lines scr_line shift change_text
             }
 
             for { set i 1 } { $i <= $diff_type } { incr i } {
@@ -1049,11 +728,11 @@ proc ::YadtDiff3::Align_Conflict { diff_id lcs start diff_type diff_size ch_text
     }
 
     if { $move } {
-        ::YadtDiff3::Move_Lines scr_line shift change_text
+        ::YadtRange::Move_Lines scr_line shift change_text
     }
 
     if [ llength $ranges ] {
-        ::YadtDiff3::Combine_Ranges ranges $diff_id
+        ::YadtRange::Combine_Ranges ranges $diff_id
     }
 
 
@@ -1061,8 +740,8 @@ proc ::YadtDiff3::Align_Conflict { diff_id lcs start diff_type diff_size ch_text
         incr full_shift($i) $shift($i)
     }
 
-    lassign [ ::YadtDiff3::Get_Border_Ranges s size full_shift ] r_start r_end
-    ::YadtDiff3::Append_Border_Ranges ranges $r_start $r_end
+    lassign [ ::YadtRange::Get_Border_Ranges s size full_shift ] r_start r_end
+    ::YadtRange::Append_Border_Ranges ranges $r_start $r_end
 
     for { set i 1 } { $i <= $diff_type } { incr i } {
         ::Yadt::Incr_Delta $i $full_shift($i)
@@ -1080,13 +759,13 @@ proc ::YadtDiff3::Create_Combo_Values_Based_On_Ranges {} {
 
     set combo_values {}
 
-    set ranges_num [ ::YadtDiff3::Get_Ranges_Num ]
+    set ranges_num [ ::YadtRange::Get_Ranges_Num ]
 
     for { set i 1 } { $i <= $ranges_num } { incr i } {
 
         set combo_value {}
 
-        lassign [ ::YadtDiff3::Get_Range $i ] r_start r_end type
+        lassign [ ::YadtRange::Get_Range $i ] r_start r_end type
 
         for { set j 1 } { $j <= [ ::Yadt::Get_Diff_Type ] } { incr j } {
             set len($j) [ string length \

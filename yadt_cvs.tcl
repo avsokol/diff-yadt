@@ -92,7 +92,7 @@ proc ::YadtCvs::Save_CVS_Like_Merge_File {} {
                     incr add_lines_num
                 }
 
-                set content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff_Id $i 3 ] 0 ] \n ]
+                set content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff3_Id $i 3 ] 0 ] \n ]
                 if { $content != "" } {
                     append add_content "\n$content"
                 }
@@ -107,7 +107,7 @@ proc ::YadtCvs::Save_CVS_Like_Merge_File {} {
                     incr add_lines_num
                 }
 
-                set content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff_Id $i 2 ] 0 ] \n ]
+                set content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff3_Id $i 2 ] 0 ] \n ]
                 if { $content != "" } {
                     append add_content "\n$content"
                 }
@@ -123,7 +123,7 @@ proc ::YadtCvs::Save_CVS_Like_Merge_File {} {
                     incr add_lines_num
                 }
 
-                set add_content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff_Id $i 2 ] 0 ] \n ]
+                set add_content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff3_Id $i 2 ] 0 ] \n ]
             }
             1 -
             3 {
@@ -135,7 +135,7 @@ proc ::YadtCvs::Save_CVS_Like_Merge_File {} {
                     incr add_lines_num
                 }
 
-                set add_content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff_Id $i 3 ] 0 ] \n ]
+                set add_content [ join [ lindex [ ::Yadt::Gather_File_Strings_By_Diff3_Id $i 3 ] 0 ] \n ]
             }
         }
 
