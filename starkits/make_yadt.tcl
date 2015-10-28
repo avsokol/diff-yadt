@@ -24,6 +24,7 @@ proc ::MakeYadt::Get_Common_Files_List { syren_src_dir } {
                          yadt_images.tcl \
                          yadt_lcs.tcl \
                          yadt_paned.tcl \
+                         yadt_ranges.tcl \
                          yadt.tcl \
                          tcllib1.18/cmdline/pkgIndex.tcl \
                          tcllib1.18/cmdline/cmdline.tcl \
