@@ -324,7 +324,7 @@ proc ::YadtLcs::Find_Lcs_Corresponding_Lines { lcs lines line } {
 
         set ln(1) $line
 
-        if { $ln12 == $ln23 } {
+        if { $ln12 == $ln13 } {
             set ln(2) $ln12
             set ln(3) $ln13
 
