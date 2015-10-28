@@ -312,44 +312,53 @@ proc ::YadtLcs::Find_Lcs_Corresponding_Lines { lcs lines line } {
     upvar $lcs lcsdata
     upvar $lines ln
 
-    set idx12 [ lsearch $lcsdata(12,1) $line ]
-    set idx13 [ lsearch $lcsdata(13,1) $line ]
+    set idx121 [ lsearch $lcsdata(12,1) $line ]
+    set idx131 [ lsearch $lcsdata(13,1) $line ]
 
-    if { $idx12 != -1 && $idx13 != -1 } {
-        set ln12 [ lindex $lcsdata(12,2) $idx12 ]
-        set ln13 [ lindex $lcsdata(13,3) $idx13 ]
+    if { $idx121 != -1 && $idx131 != -1 } {
+        set ln122 [ lindex $lcsdata(12,2) $idx121 ]
+        set ln133 [ lindex $lcsdata(13,3) $idx131 ]
 
-        set idx23 [ lsearch $lcsdata(23,2) $ln12 ]
-        set ln23 [ lindex $lcsdata(23,2) $idx23 ]
+        set idx232 [ lsearch $lcsdata(23,2) $ln122 ]
+        set ln232 [ lindex $lcsdata(23,2) $idx232 ]
 
         set ln(1) $line
 
-        if { $ln12 == $ln13 } {
-            set ln(2) $ln12
-            set ln(3) $ln13
+        set replaced121 0
 
-            set lcsdata(12,1) [ lreplace $lcsdata(12,1) $idx12 $idx12 ]
-            set lcsdata(12,2) [ lreplace $lcsdata(12,2) $idx12 $idx12 ]
+        if { $ln122 == $ln133 || $ln122 == $ln232 } {
+            set ln(2) $ln122
+            set ln(3) $ln133
 
-            set lcsdata(13,1) [ lreplace $lcsdata(13,1) $idx13 $idx13 ]
-            set lcsdata(13,3) [ lreplace $lcsdata(13,3) $idx13 $idx13 ]
+            set lcsdata(12,1) [ lreplace $lcsdata(12,1) $idx121 $idx121 ]
+            set lcsdata(12,2) [ lreplace $lcsdata(12,2) $idx121 $idx121 ]
+            set replaced121 1
 
-            set lcsdata(23,2) [ lreplace $lcsdata(23,2) $idx23 $idx23 ]
-            set lcsdata(23,3) [ lreplace $lcsdata(23,3) $idx23 $idx23 ]
+            if { $ln122 == $ln133 } {
+                set lcsdata(13,1) [ lreplace $lcsdata(13,1) $idx131 $idx131 ]
+                set lcsdata(13,3) [ lreplace $lcsdata(13,3) $idx131 $idx131 ]
+            }
+
+            if { $ln122 == $ln232 } {
+                set lcsdata(23,2) [ lreplace $lcsdata(23,2) $idx232 $idx232 ]
+                set lcsdata(23,3) [ lreplace $lcsdata(23,3) $idx232 $idx232 ]
+            }
         }
 
-        if { $ln12 < $ln13 } {
-            set ln(2) $ln12
-
-            set lcsdata(12,1) [ lreplace $lcsdata(12,1) $idx12 $idx12 ]
-            set lcsdata(12,2) [ lreplace $lcsdata(12,2) $idx12 $idx12 ]
+        if { $ln122 < $ln133 || $ln122 < $ln232 } {
+            set ln(2) $ln122
+            
+            if { !$replaced121 } {
+                set lcsdata(12,1) [ lreplace $lcsdata(12,1) $idx121 $idx121 ]
+                set lcsdata(12,2) [ lreplace $lcsdata(12,2) $idx121 $idx121 ]
+            }
         } 
 
-        if { $ln12 >  $ln13 } {
-            set ln(3) $ln13
+        if { $ln122 >  $ln133 || $ln122 > $ln232 } {
+            set ln(3) $ln133
 
-            set lcsdata(13,1) [ lreplace $lcsdata(13,1) $idx13 $idx13 ]
-            set lcsdata(13,3) [ lreplace $lcsdata(13,3) $idx13 $idx13 ]
+            set lcsdata(13,1) [ lreplace $lcsdata(13,1) $idx131 $idx131 ]
+            set lcsdata(13,3) [ lreplace $lcsdata(13,3) $idx131 $idx131 ]
         }
 
         return 1
