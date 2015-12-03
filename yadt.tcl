@@ -938,7 +938,7 @@ proc ::Yadt::Read_Config_File {} {
 
 proc ::Yadt::Parse_Args {} {
 
-    global argv argc ERROR_CODES
+    global argv argc ERROR_CODES tcl_platform
 
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::MERGE_START
@@ -1465,6 +1465,17 @@ proc ::Yadt::Parse_Args {} {
         if { $stand_alone && $VCS_CMD == "cvs" } {
             set VCS_CMD [ ::Yadt::Extract_Tool_And_Update_Cmd -$OPTIONS(vcs) ]
         }
+        if { $tcl_platform(platform) == "windows" } {
+            if { $VCS_CMD == "git" } {
+                set git_cmds [ exec where git ]
+                foreach line [ split $git_cmds \n ] {
+                    if { "bin" in [ file split $line ] } {
+                        set VCS_CMD $line
+                        break
+                    }
+                }
+            }
+        }
     }
 
     if { $DIFF_CMD == "" } {
@@ -1709,7 +1720,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.303 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.305 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -3091,6 +3102,7 @@ proc ::Yadt::Do_Diff {} {
 
 proc ::Yadt::Exec_Diff {} {
 
+    global tcl_platform
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::DIFF_TYPE
     variable ::Yadt::OPTIONS
@@ -3124,19 +3136,71 @@ proc ::Yadt::Exec_Diff {} {
         }
     }
 
-    switch -- $DIFF_TYPE {
-        2 {
-            if { $OPTIONS(vcs) == "cvs" && $OPTIONS(vcs_needed) && $OPTIONS(use_cvs_diff) } {
-                ::YadtDiff2::Set_Diff2 [ ::Yadt::CVS_Diff ]
-            } else {
-                ::YadtDiff2::Set_Diff2 [ ::Yadt::Exec_Diff2 1 2 ]
+    if { $tcl_platform(platform) == "windows" && $tcl_platform(osVersion) == 6.2 } {
+        ::Yadt::Diff_Compatibility_Modes -set
+    }
+
+    set res [ catch {
+        switch -- $DIFF_TYPE {
+            2 {
+                if { $OPTIONS(vcs) == "cvs" && $OPTIONS(vcs_needed) && $OPTIONS(use_cvs_diff) } {
+                    ::YadtDiff2::Set_Diff2 [ ::Yadt::CVS_Diff ]
+                } else {
+                    ::YadtDiff2::Set_Diff2 [ ::Yadt::Exec_Diff2 1 2 ]
+                }
+            }
+            3 {
+                ::Yadt::Exec_Diff3
+            }
+            default {
+                return -code error "Incorrect compare type: $DIFF_TYPE"
             }
         }
-        3 {
-            ::Yadt::Exec_Diff3
+    } errmsg ]
+
+    if { $tcl_platform(platform) == "windows" && $tcl_platform(osVersion) == 6.2 } {
+        catch {
+            ::Yadt::Diff_Compatibility_Modes -clear
+        }
+    }
+
+    if { $res } {
+        return -code error $errmsg
+    }
+}
+
+#===============================================================================
+
+proc ::Yadt::Diff_Compatibility_Modes { action } {
+
+    global tcl_platform
+    variable ::Yadt::DIFF_CMD
+    variable ::Yadt::DIFF_CMD_ORIG
+    variable ::Yadt::OPTIONS
+
+    if { $tcl_platform(platform) != "windows" || $tcl_platform(osVersion) != 6.2 } return
+
+    switch -- $action {
+        -set {
+            set DIFF_CMD_ORIG $DIFF_CMD
+
+            set diff_cmd $DIFF_CMD_ORIG
+            if { [ file pathtype $diff_cmd ] == "relative" } {
+                set diff_cmd [ lindex [ split [ exec where $diff_cmd ] \n ] 0 ]
+            }
+
+            set DIFF_CMD [ file join $OPTIONS(tmpdir) diffy.exe ]
+
+            if { $DIFF_CMD != $diff_cmd } {
+                file copy -force $diff_cmd $DIFF_CMD
+            }
+        }
+        -clear {
+            catch { file delete -force $DIFF_CMD }
+            set DIFF_CMD $DIFF_CMD_ORIG
         }
         default {
-            return -code error "Incorrect compare type: $DIFF_TYPE"
+            return -code error "Unsupported action <$action>"
         }
     }
 }
