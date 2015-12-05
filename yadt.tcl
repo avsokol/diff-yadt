@@ -3189,14 +3189,17 @@ proc ::Yadt::Diff_Compatibility_Modes { action } {
                 set diff_cmd [ lindex [ split [ exec where $diff_cmd ] \n ] 0 ]
             }
 
-            set DIFF_CMD [ file join $OPTIONS(tmpdir) diffy.exe ]
+            set DIFF_CMD [ file join $OPTIONS(tmpdir) diffy[pid].exe ]
 
             if { $DIFF_CMD != $diff_cmd } {
                 file copy -force $diff_cmd $DIFF_CMD
             }
+            ::YadtDiff2::Diff_Cmd_Windows_Compatibility_Mode -set $DIFF_CMD
+
         }
         -clear {
             catch { file delete -force $DIFF_CMD }
+            ::YadtDiff2::Diff_Cmd_Windows_Compatibility_Mode -delete $DIFF_CMD
             set DIFF_CMD $DIFF_CMD_ORIG
         }
         default {

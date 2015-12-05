@@ -570,3 +570,31 @@ proc ::YadtDiff2::Create_Screen_Ranges { ranges diff_id diff_size start end type
 }
 
 #===============================================================================
+
+proc ::YadtDiff2::Diff_Cmd_Windows_Compatibility_Mode { action cmd_path { compatibility "~ WINXPSP3" } } {
+
+    switch -- $action {
+        -get {
+            if [ catch { registry get "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" [ file nativename $cmd_path ] } value ] {
+                set value ""
+            }
+            return $value
+        }
+        -set {
+            if { $compatibility == "" } {
+                ::YadtDiff2::Diff_Cmd_Windows_Compatibility_Mode -delete $cmd_path
+                return
+            }
+
+            registry set "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" [ file nativename $cmd_path ] $compatibility
+        }
+        -delete {
+            registry delete "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" "[ file nativename $cmd_path ]"
+        }
+        default {
+            return -code error "Unsupported action <$action>"
+        }
+    }
+}
+
+#===============================================================================
