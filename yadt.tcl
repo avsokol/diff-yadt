@@ -488,7 +488,7 @@ proc ::Yadt::Prepare_GIT_Cmd { filename index rev } {
     set DIFF_FILES(label,$index) "$filename (CVS r$rev)"
 
     set abs_file [ file normalize $filename ]
-    set n_file [ file nativename [ file normalize [ file join $OPTIONS(git_abs_dir) $abs_file  ] ] ]
+    set n_file [ file normalize [ file join $OPTIONS(git_abs_dir) $abs_file  ] ]
     set filename [ string range $n_file [ expr [ string length $OPTIONS(git_abs_dir) ] + 1 ] end ]
 
     set vcs_cmd [ list $VCS_CMD -C $OPTIONS(git_abs_dir) show $rev:$filename ]
@@ -1720,7 +1720,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.305 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.306 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -3189,9 +3189,10 @@ proc ::Yadt::Diff_Compatibility_Modes { action } {
                 set diff_cmd [ lindex [ split [ exec where $diff_cmd ] \n ] 0 ]
             }
 
-            set DIFF_CMD [ file join $OPTIONS(tmpdir) diffy[pid].exe ]
+            set DIFF_CMD [ file join $::env(HOMEPATH) diffy[pid].exe ]
 
             if { $DIFF_CMD != $diff_cmd } {
+                file mkdir -force [ file dirname $DIFF_CMD ]
                 file copy -force $diff_cmd $DIFF_CMD
             }
             ::YadtDiff2::Diff_Cmd_Windows_Compatibility_Mode -set $DIFF_CMD
@@ -3235,7 +3236,7 @@ proc ::Yadt::Exec_Diff2 { id1 id2 { upvar_lcsdata "" } } {
     if { $OPTIONS(ignore_blanks) } {
         lappend cmd $DIFF_IGNORE_SPACES_OPTION
     }
-    lappend cmd -- $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
+    lappend cmd $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
 
     set result [ ::Yadt::Execute_Cmd $cmd ]
 
