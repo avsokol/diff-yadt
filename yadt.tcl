@@ -1468,7 +1468,10 @@ proc ::Yadt::Parse_Args {} {
         }
         if { $tcl_platform(platform) == "windows" } {
             if { $VCS_CMD == "git" } {
-                set git_cmds [ exec where git ]
+                if [ catch { exec where git } git_cmds ] {
+                    return -code $ERROR_CODES(uerror) "Couldn't find GIT executable in system path.\
+                    \nInstall GIT or if it is allready installed, make sure it is added in the system path."
+                } 
                 foreach line [ split $git_cmds \n ] {
                     if { "bin" in [ file split $line ] } {
                         set VCS_CMD $line
@@ -1481,8 +1484,17 @@ proc ::Yadt::Parse_Args {} {
 
     if { $DIFF_CMD == "" } {
         set DIFF_CMD diff
+        if { $tcl_platform(platform) == "windows" } {
+            set DIFF_CMD $DIFF_CMD.exe
+            if ![ catch { exec where diff } out ] {
+                set DIFF_CMD $out
+            }
+        }
         if { $stand_alone } {
             set DIFF_CMD [ ::Yadt::Extract_Tool_And_Update_Cmd -diff ]
+        }
+        if [ catch { exec $DIFF_CMD --version } out ] {
+            return -code $ERROR_CODES(uerror) "Couldn't find '[ file tail $DIFF_CMD ]' utility executable in system path."
         }
     }
 
@@ -3192,8 +3204,6 @@ proc ::Yadt::Diff_Compatibility_Modes { action } {
 
             set DIFF_CMD [ file join $::env(HOMEPATH) diffy[pid].exe ]
 
-	    puts "'$DIFF_CMD' != '$diff_cmd'"
-	    
             if { $DIFF_CMD != $diff_cmd } {
                 file mkdir [ file dirname $DIFF_CMD ]
                 file copy -force $diff_cmd $DIFF_CMD
