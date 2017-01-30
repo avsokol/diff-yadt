@@ -3192,7 +3192,7 @@ proc ::Yadt::Diff_Compatibility_Modes { action } {
             set DIFF_CMD [ file join $::env(HOMEPATH) diffy[pid].exe ]
 
             if { $DIFF_CMD != $diff_cmd } {
-                file mkdir -force [ file dirname $DIFF_CMD ]
+                file mkdir [ file dirname $DIFF_CMD ]
                 file copy -force $diff_cmd $DIFF_CMD
             }
             ::YadtDiff2::Diff_Cmd_Windows_Compatibility_Mode -set $DIFF_CMD
@@ -3236,6 +3236,7 @@ proc ::Yadt::Exec_Diff2 { id1 id2 { upvar_lcsdata "" } } {
     if { $OPTIONS(ignore_blanks) } {
         lappend cmd $DIFF_IGNORE_SPACES_OPTION
     }
+    # lappend cmd -- $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
     lappend cmd $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
 
     set result [ ::Yadt::Execute_Cmd $cmd ]
