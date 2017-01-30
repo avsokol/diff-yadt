@@ -219,8 +219,8 @@ proc Create_Maker_Widget { } {
     set w .
     wm withdraw  $w
     wm resizable $w 1 1
-    wm title $w "SyrenKit Maker"
-    wm iconname $w "SyrenKit Maker"
+    wm title $w "Kit Maker"
+    wm iconname $w "Kit Maker"
     wm protocol $w WM_DELETE_WINDOW "Exit_Kit_Maker $w"
 
     set topframe [ frame $w.top ]
@@ -405,12 +405,11 @@ proc Form_Table_For_Puts { data { title 0 } { bottom 0 } } {
     # | 0  | unregistered |
     # | 1  | test1        |
     # | 2  | test_win     |
-    # | 3  | syren-spb    |
     # +----+--------------+
     # | q  | Quit         |
     # +----+--------------+
     #
-    # data: '{ Id Name } {0 unregistered} {1 test1} {2 test_win} {3 syren-spb} { q Quit }'
+    # data: '{ Id Name } {0 unregistered} {1 test1} {2 test_win} { q Quit }'
     # title: 1 - defines that 1 string from above belongs to table title
     # bottom: 1 - defines that 1 string from the bottom belongs to table bottom
     #
@@ -581,7 +580,6 @@ proc Run_Maker { } {
     global env argc auto_path tcl_platform tclversion
     global MAKE_OPTIONS GUI_CFG
     global SUPPORTED_KITS SUPPORTED_PLATFORMS 
-    global SYREN_STATE
     global STARKIT_TO_KIT_TYPE_MATRIX STARKIT_TO_TARGET_PLATFORMS_MATRIX
     global ERROR_CODES
 
@@ -590,12 +588,12 @@ proc Run_Maker { } {
 
     # Calculate paths:
     set MAKE_OPTIONS(starkit_dir) [ file normalize [ file dirname [ info script ] ] ]
-    set MAKE_OPTIONS(syren_home) [ file dirname $MAKE_OPTIONS(starkit_dir) ]
+    set MAKE_OPTIONS(script_home) [ file dirname $MAKE_OPTIONS(starkit_dir) ]
     set MAKE_OPTIONS(output_dir) [ file join $MAKE_OPTIONS(starkit_dir) generated ]
 
-    lappend auto_path $MAKE_OPTIONS(syren_home)
-    lappend auto_path $MAKE_OPTIONS(syren_home)/BWidget.1.8.0
-    lappend auto_path $MAKE_OPTIONS(syren_home)/starkits
+    lappend auto_path $MAKE_OPTIONS(script_home)
+    lappend auto_path $MAKE_OPTIONS(script_home)/BWidget.1.8.0
+    lappend auto_path $MAKE_OPTIONS(script_home)/starkits
 
     if { $argc == 0 } {
         Load_Packages --normal
@@ -603,8 +601,6 @@ proc Run_Maker { } {
         Load_Packages --nox
     }
     
-    set SYREN_STATE(db_login_name) "admin"
-
     # Define basic globals:
     set SUPPORTED_KITS yadt
     set SUPPORTED_PLATFORMS [ list Linux windows Darwin ]
@@ -616,9 +612,6 @@ proc Run_Maker { } {
     array set STARKIT_TO_TARGET_PLATFORMS_MATRIX \
         [ list \
               yadt                [ list Linux windows Darwin ] ]
-
-    # keep 'unregistred' first in the following list:
-    set GUI_CFG(syren_branches) "unregistered"
 
     # define stakits type (-kit -sh or -exe):
     set MAKE_OPTIONS(kit_type) "-exe"
@@ -636,6 +629,8 @@ proc Run_Maker { } {
 }
 
 #===============================================================================
+
+# catch {console show}
 
 Run_Maker
 

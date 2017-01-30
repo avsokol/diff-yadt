@@ -12,7 +12,7 @@ namespace eval ::MakeYadt {
 
 #===============================================================================
 
-proc ::MakeYadt::Get_Common_Files_List { syren_src_dir } {
+proc ::MakeYadt::Get_Common_Files_List { src_dir } {
 
     set src_files_list {}
 
@@ -38,7 +38,7 @@ proc ::MakeYadt::Get_Common_Files_List { syren_src_dir } {
         lappend src_files_list $file
     }
 
-    set src_dir [ file join BWidget.1.8.0 images ]
+    set img_dir [ file join BWidget.1.8.0 images ]
     set files_list [ list \
                          error.gif \
                          info.gif \
@@ -46,15 +46,15 @@ proc ::MakeYadt::Get_Common_Files_List { syren_src_dir } {
                          warning.gif \
                         ]
     foreach file $files_list {
-        lappend src_files_list [ file join $src_dir $file ]
+        lappend src_files_list [ file join $img_dir $file ]
     }
 
     # Add files from a few directories according to pattern corresponding to each directory:
 
-    set pattern($syren_src_dir/BWidget.1.8.0)      *.tcl
-    set pattern($syren_src_dir/BWidget.1.8.0/lang) *.rc
+    set pattern($src_dir/BWidget.1.8.0)      *.tcl
+    set pattern($src_dir/BWidget.1.8.0/lang) *.rc
 
-    set start [ expr [ string length $syren_src_dir ] + 1 ]
+    set start [ expr [ string length $src_dir ] + 1 ]
 
     foreach src_dir  [ array names pattern ] {
         foreach full_fname [ glob -directory $src_dir $pattern($src_dir) ] {
@@ -70,32 +70,46 @@ proc ::MakeYadt::Get_Common_Files_List { syren_src_dir } {
 
 #===============================================================================
 
-proc ::MakeYadt::Get_Platform_Specific_Files_List { platform syren_src_dir { tmp_files {} } } {
+proc ::MakeYadt::Get_Platform_Specific_Files_List { platform src_dir { tmp_files {} } } {
 
     if [ llength $tmp_files ] {
         upvar $tmp_files tmp_src_files
     }
 
     set fname .toolsrc
-    set rcfile [ file join $syren_src_dir $fname ]
+    set rcfile [ file join $src_dir $fname ]
 
-    set content {}
+    array unset content
     set src_files_list {}
 
     foreach utility [ list cvs diff ] {
+        set content($utility) {}
         set exe_name $utility
         if { $platform == "windows" } {
             set exe_name ${utility}.exe
         }
         lappend src_files_list $exe_name
-        lappend content [ list $utility $exe_name ]
+	lappend content($utility) $exe_name
+	if { $utility == "diff" && $platform == "windows" } {
+	    foreach dll [ list libiconv2.dll libintl3.dll ] {
+		lappend src_files_list $dll
+		lappend content($utility) $dll
+	    }
+	}
+    }
+
+    parray content
+
+    set cnt {}
+    foreach name [ array names content ] {
+	lappend cnt [ concat $name $content($name) ]
     }
 
     set fd [ open $rcfile w+ ]
-    puts $fd [ join $content \n ]
+    puts $fd [ join $cnt \n ]
     close $fd
 
-    lappend tmp_src_files [ file join $syren_src_dir $fname ]
+    lappend tmp_src_files [ file join $src_dir $fname ]
 
     lappend src_files_list $fname
 

@@ -251,6 +251,7 @@ proc ::Yadt::Execute_Cmd { cmd } {
     set exitcode 0
 
     if [ catch { eval exec $cmd } stdout ] {
+	# puts "stdout: '$stdout'"
         set exitcode [ ::CmnTools::Obtain_Result_From_Error_Code -default_value -1 ]
     }
     if { $exitcode != 0  &&  $exitcode != 1 } {
@@ -1566,14 +1567,16 @@ proc ::Yadt::Extract_Tool_And_Update_Cmd { tool_name } {
     set file_content [ ::Yadt::Read_File $tools_rc ]
 
     foreach line [ split $file_content \n ] {
-        lassign [ split $line ] name exe
-        if { $name == $tool_name } {
-            set executable $exe
+        if { [ lindex $line 0 ] == $tool_name } {
+	    foreach exe [ lrange $line 1 end ] {
+		# puts "::Yadt::Extract_Tool $exe $tools_path"
+		::Yadt::Extract_Tool $exe $tools_path
+	    }
             break
         }
     }
 
-    return [ ::Yadt::Extract_Tool $executable $tools_path ]
+    return [ file join $tools_path $executable ]
 }
 
 #===============================================================================
@@ -1614,8 +1617,6 @@ proc ::Yadt::Extract_Tool { tool path } {
             file attributes $dest_tool_path -permissions +x
         }
     }
-
-    return $dest_tool_path
 }
 
 #===============================================================================
@@ -3137,7 +3138,7 @@ proc ::Yadt::Exec_Diff {} {
     }
 
     if { $tcl_platform(platform) == "windows" && $tcl_platform(osVersion) == 6.2 } {
-        ::Yadt::Diff_Compatibility_Modes -set
+        #::Yadt::Diff_Compatibility_Modes -set
     }
 
     set res [ catch {
@@ -3160,7 +3161,7 @@ proc ::Yadt::Exec_Diff {} {
 
     if { $tcl_platform(platform) == "windows" && $tcl_platform(osVersion) == 6.2 } {
         catch {
-            ::Yadt::Diff_Compatibility_Modes -clear
+            #::Yadt::Diff_Compatibility_Modes -clear
         }
     }
 
@@ -3191,6 +3192,8 @@ proc ::Yadt::Diff_Compatibility_Modes { action } {
 
             set DIFF_CMD [ file join $::env(HOMEPATH) diffy[pid].exe ]
 
+	    puts "'$DIFF_CMD' != '$diff_cmd'"
+	    
             if { $DIFF_CMD != $diff_cmd } {
                 file mkdir [ file dirname $DIFF_CMD ]
                 file copy -force $diff_cmd $DIFF_CMD
@@ -3236,9 +3239,11 @@ proc ::Yadt::Exec_Diff2 { id1 id2 { upvar_lcsdata "" } } {
     if { $OPTIONS(ignore_blanks) } {
         lappend cmd $DIFF_IGNORE_SPACES_OPTION
     }
-    # lappend cmd -- $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
-    lappend cmd $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
+    lappend cmd -- $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
+    # lappend cmd $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
 
+    # puts "cmd: '$cmd'"
+    
     set result [ ::Yadt::Execute_Cmd $cmd ]
 
     lassign $result diff_stdout stderr exitcode
@@ -12715,6 +12720,8 @@ proc bgerror { error_message } {
 # MAIN
 #
 ################################################################################
+
+# catch {console show}
 
 global ERROR_CODES
 set ERROR_CODES(ok)       0
