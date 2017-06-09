@@ -29,7 +29,7 @@ proc ::YadtCvs::VCS_Detected_In_Dir { dir vcs_pattern } {
     set abs_dir [ file nativename [ file normalize $dir ] ]
     set dir $abs_dir
     while { 1 } {
-        if { $dir == "/" } {
+        if { $dir == "/" || $dir in [ file volumes ] } {
             break
         }
         set git_dir [ file join $dir ".$vcs_pattern" ]
@@ -50,9 +50,8 @@ proc ::YadtCvs::Detect_VCS { dir } {
 
     variable ::Yadt::OPTIONS
 
-    set cvs_dir [ file join $dir CVS ]
-
     # check for CVS
+    set cvs_dir [ file join $dir CVS ]    
     if { [ file exists $cvs_dir ] && [ file isdirectory $cvs_dir ] } {
         set OPTIONS(vcs) "cvs"
         return
