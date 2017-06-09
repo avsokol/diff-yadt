@@ -251,7 +251,7 @@ proc ::Yadt::Execute_Cmd { cmd } {
     set exitcode 0
 
     if [ catch { eval exec $cmd } stdout ] {
-	# puts "stdout: '$stdout'"
+        # puts "stdout: '$stdout'"
         set exitcode [ ::CmnTools::Obtain_Result_From_Error_Code -default_value -1 ]
     }
     if { $exitcode != 0  &&  $exitcode != 1 } {
@@ -486,13 +486,33 @@ proc ::Yadt::Prepare_GIT_Cmd { filename index rev } {
         set rev "HEAD"
     }
 
-    set DIFF_FILES(label,$index) "$filename (CVS r$rev)"
+    set DIFF_FILES(label,$index) "$filename (GIT r$rev)"
 
     set abs_file [ file normalize $filename ]
     set n_file [ file normalize [ file join $OPTIONS(git_abs_dir) $abs_file  ] ]
     set filename [ string range $n_file [ expr [ string length $OPTIONS(git_abs_dir) ] + 1 ] end ]
 
     set vcs_cmd [ list $VCS_CMD -C $OPTIONS(git_abs_dir) show $rev:$filename ]
+
+    return $vcs_cmd
+}
+
+#===============================================================================
+
+proc ::Yadt::Prepare_HG_Cmd { filename index rev } {
+
+    variable ::Yadt::DIFF_FILES
+    variable ::Yadt::VCS_CMD
+
+    if { $rev == "" } {
+        set DIFF_FILES(label,$index) "$filename (HG r$rev)"
+    }
+
+    set vcs_cmd [ list $VCS_CMD cat ]
+    if { $rev != "" } {
+        lappend vcs_cmd -r $rev
+    }
+    lappend vcs_cmd $filename
 
     return $vcs_cmd
 }
@@ -514,6 +534,9 @@ proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
         }
         "git" {
             set vcs_cmd [ ::Yadt::Prepare_GIT_Cmd $filename $index $rev ]
+        }
+        "hg" {
+            set vcs_cmd [ ::Yadt::Prepare_HG_Cmd $filename $index $rev ]
         }
         default {
             return -code error "Sorry, VCS <$OPTIONS(vcs)> not supported yet"
@@ -1580,10 +1603,10 @@ proc ::Yadt::Extract_Tool_And_Update_Cmd { tool_name } {
 
     foreach line [ split $file_content \n ] {
         if { [ lindex $line 0 ] == $tool_name } {
-	    foreach exe [ lrange $line 1 end ] {
-		# puts "::Yadt::Extract_Tool $exe $tools_path"
-		::Yadt::Extract_Tool $exe $tools_path
-	    }
+            foreach exe [ lrange $line 1 end ] {
+                # puts "::Yadt::Extract_Tool $exe $tools_path"
+                ::Yadt::Extract_Tool $exe $tools_path
+            }
             break
         }
     }
@@ -1733,7 +1756,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.310 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.311 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -3128,6 +3151,9 @@ proc ::Yadt::Exec_Diff {} {
             }
         }
         "git" {
+            set file_check 1
+        }
+        "hg" {
             set file_check 1
         }
         "files" {

@@ -22,6 +22,30 @@ namespace eval ::YadtCvs {
 
 #===============================================================================
 
+proc ::YadtCvs::VCS_Detected_In_Dir { dir vcs_pattern } {
+
+    variable ::Yadt::OPTIONS
+
+    set abs_dir [ file nativename [ file normalize $dir ] ]
+    set dir $abs_dir
+    while { 1 } {
+        if { $dir == "/" } {
+            break
+        }
+        set git_dir [ file join $dir ".$vcs_pattern" ]
+        if { [ file exists $git_dir ] && [ file isdirectory $git_dir ] } {
+            set OPTIONS(vcs) $vcs_pattern
+            set OPTIONS(${vcs_pattern}_abs_dir) $dir
+            return 1
+        }
+        set dir [ file dirname $dir ]
+    }
+
+    return 0
+}
+
+#===============================================================================
+
 proc ::YadtCvs::Detect_VCS { dir } {
 
     variable ::Yadt::OPTIONS
@@ -35,19 +59,13 @@ proc ::YadtCvs::Detect_VCS { dir } {
     }
 
     # check for GIT
-    set abs_dir [ file nativename [ file normalize $dir ] ]
-    set dir $abs_dir
-    while { 1 } {
-        if { $dir == "/" } {
-            break
-        }
-        set git_dir [ file join $dir .git ]
-        if { [ file exists $git_dir ] && [ file isdirectory $git_dir ] } {
-            set OPTIONS(vcs) "git"
-            set OPTIONS(git_abs_dir) $dir
-            return
-        }
-        set dir [ file dirname $dir ]
+    if [ ::YadtCvs::VCS_Detected_In_Dir $dir "git" ] {
+        return
+    }
+
+    # check for Mercurial
+    if [ ::YadtCvs::VCS_Detected_In_Dir $dir "hg" ] {
+        return
     }
 }
 
