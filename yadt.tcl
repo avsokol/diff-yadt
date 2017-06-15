@@ -504,8 +504,13 @@ proc ::Yadt::Prepare_HG_Cmd { filename index rev } {
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::VCS_CMD
 
+    # TBR
+    if { $rev == "HEAD" } {
+        set rev ""
+    }
+    
     if { $rev == "" } {
-        set DIFF_FILES(label,$index) "$filename (HG r$rev)"
+        set DIFF_FILES(label,$index) "$filename (HG rPARENT)"
     }
 
     set vcs_cmd [ list $VCS_CMD cat ]
@@ -1510,7 +1515,7 @@ proc ::Yadt::Parse_Args {} {
         if { $tcl_platform(platform) == "windows" } {
             set DIFF_CMD $DIFF_CMD.exe
             if ![ catch { exec where diff } out ] {
-                set DIFF_CMD $out
+                set DIFF_CMD [ lindex [ split $out \n ] 0 ]
             }
         }
         if { $stand_alone } {
@@ -1756,7 +1761,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.312 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.313 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -3276,9 +3281,6 @@ proc ::Yadt::Exec_Diff2 { id1 id2 { upvar_lcsdata "" } } {
         lappend cmd $DIFF_IGNORE_SPACES_OPTION
     }
     lappend cmd -- $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
-    # lappend cmd $DIFF_FILES(path,$id1) $DIFF_FILES(path,$id2)
-
-    # puts "cmd: '$cmd'"
     
     set result [ ::Yadt::Execute_Cmd $cmd ]
 
@@ -12119,8 +12121,8 @@ proc ::Yadt::Show_Help {} {
 
 Yadt stands for yet another diff tool.
 Yadt can be used for comparing and merging two or three files.
-Actually, it is a front-end for diff and diff3 for Unix and Windows.
-
+Actually, it is a front-end for diff (and in early versions diff3) for Linux, MacOS and Windows. SunOS is nomore supported.
+Alco, currently, Yadt supports the following version control systems: CVS, GIT and Mercurial.
 
 <ttl>Yadt command line usage</ttl>
 
