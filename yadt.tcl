@@ -114,16 +114,6 @@ variable ::Yadt::DIFF_INT
 
 #-------------------------------------------------------------------------------
 
-# Input data array for diff - get by Exec_Diff2 proc
-variable ::Yadt::DIFF2
-# Format:
-# DIFF2(diff) <list of diff output values>
-
-# Example:
-# DIFF2(diff) = "1c1 3c3 5d4 6a6 8c8 10c10 12,13c12"
-
-#-------------------------------------------------------------------------------
-
 # Array, which contains a common longest substring (cls) elements between files
 # used for comparing 3 files
 # array keys: '12', '13', '23', 'unchanged'
@@ -1761,7 +1751,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.313 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.314 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -2462,7 +2452,6 @@ proc ::Yadt::Go_To_Initline {} {
 
 proc ::Yadt::Wipe {} {
 
-    variable ::Yadt::DIFF2
     variable ::Yadt::DIFF_FILES
     variable ::Yadt::DIFF_INT
     variable ::Yadt::DIFF_TYPE
@@ -2486,7 +2475,7 @@ proc ::Yadt::Wipe {} {
 
     switch -- $DIFF_TYPE {
         2 {
-            set DIFF2(diff) ""
+            ::YadtDiff2::Wipe
         }
         3 {
             ::YadtDiff3::Wipe
@@ -2893,7 +2882,6 @@ proc ::Yadt::Save_One_Merged_File { ind args } {
 proc ::Yadt::Save_Merged_Widget_Content_To_File { merge_idx file_name } {
 
     variable ::Yadt::DIFF_TYPE
-    variable ::Yadt::DIFF2
     variable ::Yadt::DIFF_INT
     variable ::Yadt::TEXT_NUM_WDG
     variable ::Yadt::MERGE_TEXT_WDG
@@ -2911,61 +2899,67 @@ proc ::Yadt::Save_Merged_Widget_Content_To_File { merge_idx file_name } {
 
         switch -- $DIFF_TYPE {
             2 {
-                set diff_id [ llength $DIFF2(diff) ]
+                set diff_id [ ::YadtDiff2::Get_Diff_Num ]
             }
             3 {
                 set diff_id [ ::YadtDiff3::Get_Diff_Num ]
             }
         }
 
-        # getting last diff files lines
-        for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-            set cnt($i) [ ::Yadt::Get_Diff_Id_Content $diff_id $i ]
-            # removing no newline mark if any
-            if { $NOLF($i) } {
-                set cnt($i) [ string range $cnt($i) \
-                                  0 [ expr [ string length $cnt($i) ] - [ string length $NO_NEWLINE_WARNING ] - 1 ] ]
+        if { $diff_id == 0 } {
+            set confirm 0
+            set last_merged_method 0
+        } else {
+
+            # getting last diff files lines
+            for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                set cnt($i) [ ::Yadt::Get_Diff_Id_Content $diff_id $i ]
+                # removing no newline mark if any
+                if { $NOLF($i) } {
+                    set cnt($i) [ string range $cnt($i) \
+                                      0 [ expr [ string length $cnt($i) ] - [ string length $NO_NEWLINE_WARNING ] - 1 ] ]
+                }
+            }
+
+            switch -- $DIFF_TYPE {
+                2 {
+                    lassign [ ::Yadt::Get_Pdiff_For_Diff_Id $diff_id ] thisdiff s(1) e(1) s(2) e(2) type
+
+                    set num_end(1) [ $TEXT_NUM_WDG(1) get end-2lines end-1lines-1char ]
+                    set num_end(2) [ $TEXT_NUM_WDG(2) get end-2lines end-1lines-1char ]
+
+                    if { $num_end(1) == $e(1) || $num_end(2) == $e(2) } {
+                        # last diff envolves last line
+                        set last_merged_method $::Yadt::DIFF_INT(normal_merge$diff_id)
+                    }
+
+                    # detecting whether we need a confirmation from user about LF type save
+                    if { $NOLF(1) == $NOLF(2) || $last_merged_method == 0 || ( $last_merged_method != -1 && $cnt(1) == $cnt(2) ) } {
+                        set confirm 0
+                    }
+                }
+                3 {
+                    for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
+                        lassign [ ::Yadt::Get_Pdiff_For_Diff_Id $diff_id -file_id $i ] \
+                            thisdiff($i) s($i) e($i) type($i)
+                        set num_end($i) [ $TEXT_NUM_WDG($i) get end-2lines end-1lines-1char ]
+                    }
+
+                    if { $num_end(1) == $e(1) || $num_end(2) == $e(2) || $num_end(3) == $e(3) } {
+                        # last diff envolves last line
+                        set last_merged_method $::Yadt::DIFF_INT(normal_merge$diff_id,$merge_idx)
+                    }
+
+                    # detecting whether we need a confirmation from user about LF type save
+                    if { ( $NOLF(1) == $NOLF(2) && $NOLF(1) == $NOLF(3) ) || \
+                             $last_merged_method == 0 || \
+                             ( $last_merged_method != -1 && $cnt(1) == $cnt(2) && $cnt(1) == $cnt(3) ) } {
+                        set confirm 0
+                    }
+                }
             }
         }
-
-        switch -- $DIFF_TYPE {
-            2 {
-                lassign [ ::Yadt::Get_Pdiff_For_Diff_Id $diff_id ] thisdiff s(1) e(1) s(2) e(2) type
-
-                set num_end(1) [ $TEXT_NUM_WDG(1) get end-2lines end-1lines-1char ]
-                set num_end(2) [ $TEXT_NUM_WDG(2) get end-2lines end-1lines-1char ]
-
-                if { $num_end(1) == $e(1) || $num_end(2) == $e(2) } {
-                    # last diff envolves last line
-                    set last_merged_method $::Yadt::DIFF_INT(normal_merge$diff_id)
-                }
-
-                # detecting whether we need a confirmation from user about LF type save
-                if { $NOLF(1) == $NOLF(2) || $last_merged_method == 0 || ( $last_merged_method != -1 && $cnt(1) == $cnt(2) ) } {
-                    set confirm 0
-                }
-            }
-            3 {
-                for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
-                    lassign [ ::Yadt::Get_Pdiff_For_Diff_Id $diff_id -file_id $i ] \
-                        thisdiff($i) s($i) e($i) type($i)
-                    set num_end($i) [ $TEXT_NUM_WDG($i) get end-2lines end-1lines-1char ]
-                }
-
-                if { $num_end(1) == $e(1) || $num_end(2) == $e(2) || $num_end(3) == $e(3) } {
-                    # last diff envolves last line
-                    set last_merged_method $::Yadt::DIFF_INT(normal_merge$diff_id,$merge_idx)
-                }
-
-                # detecting whether we need a confirmation from user about LF type save
-                if { ( $NOLF(1) == $NOLF(2) && $NOLF(1) == $NOLF(3) ) || \
-                         $last_merged_method == 0 || \
-                         ( $last_merged_method != -1 && $cnt(1) == $cnt(2) && $cnt(1) == $cnt(3) ) } {
-                    set confirm 0
-                }
-            }
-        }
-
+        
         if { $last_merged_method != -1 && $last_merged_method != 0 } {
             # finding which file adds the last line in a merged file
             set last_merged_method [ lindex [ split $last_merged_method {} ] end ]                    
