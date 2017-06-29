@@ -501,6 +501,8 @@ proc ::Yadt::Prepare_HG_Cmd { filename index rev } {
     
     if { $rev == "" } {
         set DIFF_FILES(label,$index) "$filename (HG rPARENT)"
+    } else {
+        set DIFF_FILES(label,$index) "$filename (HG $rev)"
     }
 
     set vcs_cmd [ list $VCS_CMD cat ]
