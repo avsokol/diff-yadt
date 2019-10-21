@@ -1,6 +1,8 @@
 package ifneeded CmnTools 1.0      [list source [file join $dir common_tools.tcl]]
 package ifneeded yadt 1.0          [list source [file join $dir yadt.tcl]]
 package ifneeded YadtCvs 1.0       [list source [file join $dir yadt_cvs.tcl]]
+package ifneeded YadtGit 1.0       [list source [file join $dir yadt_git.tcl]]
+package ifneeded YadtHG 1.0       [list source [file join $dir yadt_hg.tcl]]
 package ifneeded YadtDiff2 1.0     [list source [file join $dir yadt_diff2.tcl]]
 package ifneeded YadtDiff3 1.0     [list source [file join $dir yadt_diff3.tcl]]
 package ifneeded YadtImg 1.0       [list source [file join $dir yadt_images.tcl]]

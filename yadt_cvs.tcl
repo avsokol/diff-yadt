@@ -193,8 +193,8 @@ proc ::YadtCvs::Ignore_No_CVS_Tag_Error { cvs_out args } {
     # as: when we do not have a revision, cvs does not raise an error
     # but when we do not have a tag, cvs raises an error
     if [ regsub {^cvs \[checkout|diff aborted\]: no such tag.*$} $out "" out ] {
-        set exitcode 0
-    }    
+        set exitcode 42
+    }
 }
 
 #===============================================================================

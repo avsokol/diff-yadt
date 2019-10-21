@@ -255,6 +255,7 @@ proc ::Yadt::Execute_Cmd { cmd } {
 proc ::Yadt::Exec_To_File { cmd file } {
 
     global errorCode
+    variable ::Yadt::OPTIONS
 
     set exec_cmd $cmd
     lappend exec_cmd >$file
@@ -263,11 +264,26 @@ proc ::Yadt::Exec_To_File { cmd file } {
 
     lassign $result stdout stderr exitcode
 
-    ::YadtCvs::Ignore_No_CVS_Tag_Error stdout -code exitcode
+    switch -- $OPTIONS(vcs) {
+        "cvs" {
+            ::YadtCvs::Ignore_No_CVS_Tag_Error stdout -code exitcode
+        }
+        "git" {
+            ::YadtGit::Ignore_No_Git_Revision stdout -code exitcode
+        }
+        "hg" {
+            ::YadtHG::Ignore_No_HG_Revision stdout -code exitcode            
+        }
+        default {
+            return -code error "Sorry, VCS <$OPTIONS(vcs)> not supported yet"
+        }
+    }
 
-    if { $exitcode != 0 } {
+    if { $exitcode ni [ list 0 42 ] } {
         return -code error "Error while executing <$cmd>:\n$stderr\n$stdout"
     }
+
+    return $exitcode
 }
 
 #===============================================================================
@@ -352,7 +368,7 @@ proc ::Yadt::Prepare_File { filename index { chdir "" } } {
         return -code error $errmsg
     }
 
-    set DIFF_FILES(label,$index) "$filename"
+    ::Yadt::Set_Diff_File_Label $index "$filename"
     set DIFF_FILES(orig_path,$index) "$filename"
     set DIFF_FILES(path,$index) "$filename"
     set DIFF_FILES(full_path,$index) "[ file join [ pwd ] $filename ]"
@@ -457,7 +473,7 @@ proc ::Yadt::Prepare_CVS_Cmd { filename index rev } {
         }
     }
 
-    set DIFF_FILES(label,$index) "$filename (CVS r$rev)"
+    ::Yadt::Set_Diff_File_Label $index "$filename (CVS r$rev)"
 
     set vcs_cmd [ list $VCS_CMD -d $cvsroot -q co -p -r $rev $file_to_compare ]
 
@@ -475,8 +491,7 @@ proc ::Yadt::Prepare_GIT_Cmd { filename index rev } {
     if { $rev == "" } {
         set rev "HEAD"
     }
-
-    set DIFF_FILES(label,$index) "$filename (GIT r$rev)"
+    ::Yadt::Set_Diff_File_Label $index "$filename (GIT r$rev)"
 
     set abs_file [ file normalize $filename ]
     set n_file [ file normalize [ file join $OPTIONS(git_abs_dir) $abs_file  ] ]
@@ -500,11 +515,12 @@ proc ::Yadt::Prepare_HG_Cmd { filename index rev } {
     }
     
     if { $rev == "" } {
-        set DIFF_FILES(label,$index) "$filename (HG rPARENT)"
+        set value "$filename (HG rPARENT)"
     } else {
-        set DIFF_FILES(label,$index) "$filename (HG $rev)"
+        set value "$filename (HG $rev)"
     }
-
+    ::Yadt::Set_Diff_File_Label $index $value
+    
     set vcs_cmd [ list $VCS_CMD cat ]
     if { $rev != "" } {
         lappend vcs_cmd -r $rev
@@ -561,7 +577,10 @@ proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
             set DIFF_FILES(full_path,$index) "[ file join [ pwd ] $DIFF_FILES(path,$index) ]"
             set DIFF_FILES(tmp,$index) 1
 
-            ::Yadt::Exec_To_File $vcs_cmd $DIFF_FILES(path,$index)
+            set exec_code [ ::Yadt::Exec_To_File $vcs_cmd $DIFF_FILES(path,$index) ]
+            if { $exec_code == 42 } {
+                ::Yadt::Set_Diff_File_Label $index "No Revision"
+            }
         }
         -variable {
 
@@ -1710,10 +1729,11 @@ proc ::Yadt::Update_Wm_Title {} {
     variable ::Yadt::WDG_OPTIONS
     variable ::Yadt::WIDGETS
 
-    set yadt_rev_title ": [ file tail $DIFF_FILES(label,1) ] vs. [ file tail $DIFF_FILES(label,2) ]"
+    set yadt_rev_title ": [ file tail [ ::Yadt::Get_Diff_File_Label 1 ] ] 
+                       vs. [ file tail [ ::Yadt::Get_Diff_File_Label 2 ] ]"
 
     if { $DIFF_TYPE == 3 } {
-        append yadt_rev_title  " vs. [ file tail $DIFF_FILES(label,3) ]"
+        append yadt_rev_title  " vs. [ file tail [ ::Yadt::Get_Diff_File_Label 3 ] ]"
     }
 
     wm title $WIDGETS(window_name) "$WDG_OPTIONS(yadt_title) $yadt_rev_title"
@@ -1753,7 +1773,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.315 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.316 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -1784,6 +1804,8 @@ proc ::Yadt::Run {} {
     package require BWidget 1.8
     package require CmnTools
     package require YadtCvs
+    package require YadtGit
+    package require YadtHG
     package require YadtImg
     package require YadtLcs
     package require YadtDiff2
@@ -6593,7 +6615,7 @@ proc ::Yadt::Update_File_Labels {} {
     for { set i 1 } { $i <= $DIFF_TYPE } { incr i } {
         $WIDGETS(file_title_$i) configure -state normal
         $WIDGETS(file_title_$i) delete 0 end
-        $WIDGETS(file_title_$i) insert end "$MAP_TITLE($i) $DIFF_FILES(label,$i)"
+        $WIDGETS(file_title_$i) insert end "$MAP_TITLE($i) [ ::Yadt::Get_Diff_File_Label $i ]"
         $WIDGETS(file_title_$i) configure -state readonly
 
         DynamicHelp::add $WIDGETS(file_title_$i) -type balloon -variable ::Yadt::DIFF_FILES(full_path,$i)
