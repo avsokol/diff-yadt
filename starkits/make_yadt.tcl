@@ -84,6 +84,12 @@ proc ::MakeYadt::Get_Platform_Specific_Files_List { platform src_dir { tmp_files
     array unset content
     set src_files_list {}
 
+    if { $platform == "Linux" } {
+        # consider for Linux cvs and diff should be installed
+        set tmp_src_files {}
+        return $src_files_list
+    }
+
     foreach utility [ list cvs diff ] {
         set content($utility) {}
         set exe_name $utility
@@ -91,20 +97,20 @@ proc ::MakeYadt::Get_Platform_Specific_Files_List { platform src_dir { tmp_files
             set exe_name ${utility}.exe
         }
         lappend src_files_list $exe_name
-	lappend content($utility) $exe_name
-	if { $utility == "diff" && $platform == "windows" } {
-	    foreach dll [ list libiconv2.dll libintl3.dll ] {
-		lappend src_files_list $dll
-		lappend content($utility) $dll
-	    }
-	}
+        lappend content($utility) $exe_name
+        if { $utility == "diff" && $platform == "windows" } {
+            foreach dll [ list libiconv2.dll libintl3.dll ] {
+                lappend src_files_list $dll
+                lappend content($utility) $dll
+            }
+        }
     }
 
     parray content
 
     set cnt {}
     foreach name [ array names content ] {
-	lappend cnt [ concat $name $content($name) ]
+        lappend cnt [ concat $name $content($name) ]
     }
 
     set fd [ open $rcfile w+ ]
