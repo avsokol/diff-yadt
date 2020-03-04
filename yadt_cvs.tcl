@@ -51,9 +51,16 @@ proc ::YadtCvs::Detect_VCS { dir } {
     variable ::Yadt::OPTIONS
 
     # check for CVS
-    set cvs_dir [ file join $dir CVS ]    
+    set cvs_dir [ file join $dir CVS ]
     if { [ file exists $cvs_dir ] && [ file isdirectory $cvs_dir ] } {
         set OPTIONS(vcs) "cvs"
+        return
+    }
+
+    # check for cvs.exe
+    set cvs_dir [ file join $dir .cvs ]
+    if { [ file exists $cvs_dir ] && [ file isdirectory $cvs_dir ] } {
+        set OPTIONS(vcs) "cvs.exe"
         return
     }
 

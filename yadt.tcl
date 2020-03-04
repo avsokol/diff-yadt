@@ -268,6 +268,9 @@ proc ::Yadt::Exec_To_File { cmd file } {
         "cvs" {
             ::YadtCvs::Ignore_No_CVS_Tag_Error stdout -code exitcode
         }
+        "cvs.exe" {
+            ::YadtCvs::Ignore_No_CVS_Tag_Error stdout -code exitcode
+        }
         "git" {
             ::YadtGit::Ignore_No_Git_Revision stdout -code exitcode
         }
@@ -482,6 +485,73 @@ proc ::Yadt::Prepare_CVS_Cmd { filename index rev } {
 
 #===============================================================================
 
+proc ::Yadt::Prepare_Dot_CVS_Cmd { filename index rev } {
+
+    variable ::Yadt::DIFF_FILES
+    variable ::Yadt::DIFF_TYPE
+    variable ::Yadt::OPTIONS
+    variable ::Yadt::VCS_CMD
+
+    set dirname [ file dirname $filename ]
+    set tailname [ file tail $filename ]
+
+    set cvsroot   $OPTIONS(cvsroot)
+    set cvsmodule $OPTIONS(cvsmodule)
+
+    if { [ file pathtype $filename ] == "absolute" } {
+
+    } else {
+        if { $cvsroot != "" && $cvsmodule != "" && $rev != "" } {
+            set file_to_compare $cvsmodule/$filename
+        } else {
+
+            if ![ file exists $filename ] {
+                return -code error "No such file <$filename>"
+            }
+
+            if { $cvsroot == "" } {
+                set cvsroot [ ::YadtDotCvs::Determine_Dot_CVS_Root_From_File $filename ]
+            }
+
+            set f_cvsmodule [ ::YadtDotCvs::Determine_Dot_CVS_Module_From_File $filename ]
+
+            if { $cvsmodule == "" } {
+                set cvsmodule $f_cvsmodule
+                set fname $tailname
+            } else {
+                if { $cvsmodule != $f_cvsmodule } {
+                    set msg "Specified CVS Module: <$cvsmodule>\
+                             differs from those if CVS <$dirname> directory: <$f_cvsmodule>.\
+                             \nMake sure you compare exactly what you need."
+                    lappend OPTIONS(start_warn_msg) $msg
+                }
+                set fname $filename
+            }
+            set file_to_compare $cvsmodule/$fname
+        }
+    }
+
+    if { $rev == "" } {
+        # By default we use not HEAD, but Working file revision
+        if { $OPTIONS(cvs_ver_from_entry) } {
+            set rev [ ::YadtDotCvs::Get_Work_Rev_From_Entries $filename ]
+        }
+        if { $rev < 0  ||  $rev == "" } {
+            # Failed to obtain version from 'CVS/Entries' OR it is defined to
+            # get version from the "cvs status" command:
+            set rev [ ::YadtDotCvs::Get_Work_Rev_From_Dot_CVS $filename ]
+        }
+    }
+
+    ::Yadt::Set_Diff_File_Label $index "$filename (cvs.exe r$rev)"
+
+    set vcs_cmd [ list $VCS_CMD -d $cvsroot -q co -p -r $rev $file_to_compare ]
+
+    return $vcs_cmd
+}
+
+#===============================================================================
+
 proc ::Yadt::Prepare_GIT_Cmd { filename index rev } {
 
     variable ::Yadt::DIFF_FILES
@@ -544,6 +614,9 @@ proc ::Yadt::Prepare_File_Rev { filename index { rev "" } } {
     switch -- $OPTIONS(vcs) {
         "cvs" {
             set vcs_cmd [ ::Yadt::Prepare_CVS_Cmd $filename $index $rev ]
+        }
+        "cvs.exe" {
+            set vcs_cmd [ ::Yadt::Prepare_Dot_CVS_Cmd $filename $index $rev ]
         }
         "git" {
             set vcs_cmd [ ::Yadt::Prepare_GIT_Cmd $filename $index $rev ]
@@ -1068,6 +1141,10 @@ proc ::Yadt::Parse_Args {} {
                 incr argindex
                 set VCS_CMD [ lindex $argv $argindex ]
             }
+            "^--cvs-exe-cmd$" {
+                incr argindex
+                set VCS_CMD [ lindex $argv $argindex ]
+            }
             "^--git-cmd$" {
                 incr argindex
                 set VCS_CMD [ lindex $argv $argindex ]
@@ -1502,7 +1579,7 @@ proc ::Yadt::Parse_Args {} {
 
     if { $OPTIONS(vcs_needed) && $VCS_CMD == "" } {
         set VCS_CMD $OPTIONS(vcs)
-        if { $stand_alone && $VCS_CMD == "cvs" } {
+        if { $stand_alone && $VCS_CMD == "cvs" && $tcl_platform(os) != "Linux"} {
             set VCS_CMD [ ::Yadt::Extract_Tool_And_Update_Cmd -$OPTIONS(vcs) ]
         }
         if { $tcl_platform(platform) == "windows" } {
@@ -1804,6 +1881,7 @@ proc ::Yadt::Run {} {
     package require BWidget 1.8
     package require CmnTools
     package require YadtCvs
+    package require YadtDotCvs
     package require YadtGit
     package require YadtHG
     package require YadtImg
