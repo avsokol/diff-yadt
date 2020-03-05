@@ -1850,7 +1850,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.317 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.318 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -3246,6 +3246,7 @@ proc ::Yadt::Exec_Diff {} {
 
     set file_check 0
     switch -- $OPTIONS(vcs) {
+	"cvs.exe" -
         "cvs" {
             if { $DIFF_TYPE == 3 || !$OPTIONS(use_cvs_diff) } {
                 set file_check 1
