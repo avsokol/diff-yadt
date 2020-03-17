@@ -19,6 +19,7 @@ proc ::MakeYadt::Get_Common_Files_List { src_dir } {
     set files_list [ list \
                          common_tools.tcl \
                          yadt_cvs.tcl \
+                         yadt_dot_cvs.tcl \
                          yadt_git.tcl \
                          yadt_hg.tcl \
                          yadt_diff2.tcl \
