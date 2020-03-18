@@ -75,6 +75,12 @@ proc ::MakeYadt::Get_Common_Files_List { src_dir } {
 
 proc ::MakeYadt::Get_Platform_Specific_Files_List { platform src_dir { tmp_files {} } } {
 
+    puts "SPECIFIC FILES"
+    puts $platform
+    puts $src_dir
+    puts "=============="
+
+    
     if [ llength $tmp_files ] {
         upvar $tmp_files tmp_src_files
     }

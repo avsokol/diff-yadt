@@ -311,7 +311,7 @@ proc Create_Maker_Widget { } {
         set MAKE_OPTIONS(platform,$platform) 1
     }
 
-    BWidget::place $w 400 500 center
+    BWidget::place $w 600 500 center
     wm deiconify $w
     Log_Handler -puts "Starkit directory: <$MAKE_OPTIONS(starkit_dir)>"
 }
@@ -603,7 +603,7 @@ proc Run_Maker { } {
     
     # Define basic globals:
     set SUPPORTED_KITS yadt
-    set SUPPORTED_PLATFORMS [ list Linux windows Darwin ]
+    set SUPPORTED_PLATFORMS [ list Linux windows Darwin-Aqua Darwin-X11 ]
 
     array set STARKIT_TO_KIT_TYPE_MATRIX \
         [ list \
@@ -611,7 +611,7 @@ proc Run_Maker { } {
 
     array set STARKIT_TO_TARGET_PLATFORMS_MATRIX \
         [ list \
-              yadt                [ list Linux windows Darwin ] ]
+              yadt                [ list Linux windows Darwin-Aqua Darwin-X11 ] ]
 
     # define stakits type (-kit -sh or -exe):
     set MAKE_OPTIONS(kit_type) "-exe"

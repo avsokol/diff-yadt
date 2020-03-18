@@ -16,7 +16,7 @@ namespace eval ::StarkitGenerator {
 }
 
 variable ::StarkitGenerator::SUPPORTED_KIT_TYPES [ list -kit -sh -exe ]
-variable ::StarkitGenerator::SUPPORTED_PLATFORMS [ list Linux windows SunOS Darwin ]
+variable ::StarkitGenerator::SUPPORTED_PLATFORMS [ list Linux windows SunOS Darwin-Aqua Darwin-X11 ]
 
 variable ::StarkitGenerator::TCLKIT_RUNTIME_MATRIX
 array set ::StarkitGenerator::TCLKIT_RUNTIME_MATRIX {
@@ -29,8 +29,10 @@ array set ::StarkitGenerator::TCLKIT_RUNTIME_MATRIX {
     SunOS,-kit      ""
     SunOS,-sh       "tclkit-solaris"
     SunOS,-exe      "tclkit-solaris"
-    Darwin,-sh      "tclkit-darwin"
-    Darwin,-exe     "tclkit-darwin"
+    Darwin-Aqua,-sh "tclkit-darwin-aqua"
+    Darwin-Aqua,-exe "tclkit-darwin-aqua"
+    Darwin-X11,-sh  "tclkit-darwin-x11"
+    Darwin-X11,-exe "tclkit-darwin-x11"
 }
 
 variable ::StarkitGenerator::SDX
@@ -272,6 +274,9 @@ proc ::StarkitGenerator::Generate_Kits { sdx_name kit_lst kit_type target_platfo
 
 proc ::StarkitGenerator::Generate_One_Kit { kit kit_types starkit_dir output_dir vfs_top_dir target_platforms } {
 
+
+    puts $target_platforms
+    
     file delete -force $vfs_top_dir/$kit.vfs
 
     ::StarkitGenerator::Log_Msg "\nCreating common directory structures and files..."
