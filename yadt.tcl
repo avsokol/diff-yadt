@@ -1579,9 +1579,6 @@ proc ::Yadt::Parse_Args {} {
 
     if { $OPTIONS(vcs_needed) && $VCS_CMD == "" } {
         set VCS_CMD $OPTIONS(vcs)
-        if { $stand_alone && $VCS_CMD == "cvs" && $tcl_platform(os) != "Linux"} {
-            set VCS_CMD [ ::Yadt::Extract_Tool_And_Update_Cmd -$OPTIONS(vcs) ]
-        }
         if { $tcl_platform(platform) == "windows" } {
             if { $VCS_CMD == "git" } {
                 if [ catch { exec where git } git_cmds ] {
@@ -1676,7 +1673,7 @@ proc ::Yadt::Extract_Tool_And_Update_Cmd { tool_name } {
 
     set tool_name [ string trimleft $tool_name "-" ]
 
-    if { $tool_name ni [ list cvs diff ] } {
+    if { $tool_name ni [ list diff ] } {
         return -code error "Unsupported tool name <$tool_name>"
     }
 
@@ -1850,7 +1847,7 @@ proc ::Yadt::Run {} {
     variable ::Yadt::DIFF_FILES
 
     set Revision ""
-    set CVS_REVISION [ lindex [ split "$Revision: 3.318 $" ] 1 ]
+    set CVS_REVISION [ lindex [ split "$Revision: 3.320 $" ] 1 ]
 
     set OPTIONS(is_starkit) 0
     if { ![ catch { package present starkit } ] && [ info exists ::starkit::topdir ] } {
@@ -3246,7 +3243,7 @@ proc ::Yadt::Exec_Diff {} {
 
     set file_check 0
     switch -- $OPTIONS(vcs) {
-	"cvs.exe" -
+        "cvs.exe" -
         "cvs" {
             if { $DIFF_TYPE == 3 || !$OPTIONS(use_cvs_diff) } {
                 set file_check 1

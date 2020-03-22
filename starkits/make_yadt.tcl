@@ -75,12 +75,6 @@ proc ::MakeYadt::Get_Common_Files_List { src_dir } {
 
 proc ::MakeYadt::Get_Platform_Specific_Files_List { platform src_dir { tmp_files {} } } {
 
-    puts "SPECIFIC FILES"
-    puts $platform
-    puts $src_dir
-    puts "=============="
-
-    
     if [ llength $tmp_files ] {
         upvar $tmp_files tmp_src_files
     }
@@ -92,12 +86,12 @@ proc ::MakeYadt::Get_Platform_Specific_Files_List { platform src_dir { tmp_files
     set src_files_list {}
 
     if { $platform == "Linux" } {
-        # consider for Linux cvs and diff should be installed
+        # consider for Linux diff should be installed
         set tmp_src_files {}
         return $src_files_list
     }
 
-    foreach utility [ list cvs diff ] {
+    foreach utility [ list diff ] {
         set content($utility) {}
         set exe_name $utility
         if { $platform == "windows" } {

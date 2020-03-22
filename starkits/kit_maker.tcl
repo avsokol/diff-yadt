@@ -101,6 +101,7 @@ proc Make_Kits { { kit_list "" } } {
         $target_platforms \
         $MAKE_OPTIONS(starkit_dir) \
         $MAKE_OPTIONS(output_dir) \
+        $MAKE_OPTIONS(embed_tools) \
         -logcmd [ list Log_Handler -puts ]
 
     Log_Handler -puts ""
@@ -300,6 +301,18 @@ proc Create_Maker_Widget { } {
     label $pltfframe.platf -text "Platforms:"
     pack $pltfframe.platf -side left -padx 5 -pady 5
 
+    set tools_frame [ frame $cndframe.tools ]
+    pack $tools_frame -fill x -expand 0 -padx 2 -pady 2
+
+    set GUI_CFG(embed_tools) [ checkbutton $tools_frame.embed_tools \
+                                   -text "Embed diff" \
+                                   -offvalue 0 \
+                                   -onvalue 1 \
+                                   -variable MAKE_OPTIONS(embed_tools) ]
+    pack $GUI_CFG(embed_tools) -side left -padx 5 -pady 5
+
+    set MAKE_OPTIONS(embed_tools) 1
+
     foreach platform $SUPPORTED_PLATFORMS {
         set GUI_CFG(platform_checkbutton,$platform) [ checkbutton $pltfframe.[ string tolower $platform ] \
                                                           -text $platform \
@@ -342,6 +355,19 @@ proc Update_Target_Platforms_Console_Run_Option { kit_name } {
         } else {
             set MAKE_OPTIONS(platform,$platform) 0
         }
+    }
+}
+
+#===============================================================================
+
+proc Update_Embed_Tools_Option { embed_option } {
+
+    global MAKE_OPTIONS
+
+    if { $embed_option == 1 } {
+        set MAKE_OPTIONS(embed_tools) 1
+    } else {
+        set MAKE_OPTIONS(embed_tools) 0
     }
 }
 
@@ -536,6 +562,27 @@ proc Puts_Starkits_To_Create_And_Return_Answers {} {
 
 #===============================================================================
 
+proc Puts_Embed_Tools_And_Return_Answers {} {
+
+    set table {}
+
+    lappend table "Id Embed_Tools"
+
+    lappend table "1  Yes"
+    lappend answers "1"
+    lappend table "2  No"
+    lappend answers "2"
+
+    lappend table { q Quit }
+    lappend answers q
+
+    puts [ Form_Table_For_Puts $table 1 1 ]
+
+    return $answers
+}
+
+#===============================================================================
+
 proc Parse_Args {} {
 
     global argv MAKE_OPTIONS SUPPORTED_KITS
@@ -554,10 +601,18 @@ proc Parse_Args {} {
                 return
             }
 
+            set answers [ Puts_Embed_Tools_And_Return_Answers ]
+            set embed_tools [ Get_Answer "Embed tools inide startkit, or q for Quit" $answers ]
+
+            if { $embed_tools == "q" } {
+                return
+            }
+
             set starkit_name [ lindex $SUPPORTED_KITS [ expr $starkit_id - 1 ] ]
 
             Update_Target_Kit_Type_Option $starkit_name
             Update_Target_Platforms_Console_Run_Option $starkit_name
+            Update_Embed_Tools_Option $embed_tools
 
             Make_Kits_Wrapper $starkit_name
         }

@@ -242,7 +242,7 @@ proc ::StarkitGenerator::Log_Msg { msg } {
 
 #=======================================================================
 
-proc ::StarkitGenerator::Generate_Kits { sdx_name kit_lst kit_type target_platforms starkit_dir output_dir args } {
+proc ::StarkitGenerator::Generate_Kits { sdx_name kit_lst kit_type target_platforms starkit_dir output_dir embed_tools args } {
 
     variable ::StarkitGenerator::LOG_CMD
 
@@ -262,7 +262,7 @@ proc ::StarkitGenerator::Generate_Kits { sdx_name kit_lst kit_type target_platfo
     # Generation
     foreach kit $kit_lst {
         ::StarkitGenerator::Log_Msg "\nGenerating starkit <$kit>, type $kit_type..."
-        ::StarkitGenerator::Generate_One_Kit $kit $kit_type $starkit_dir $output_dir $vfs_top_dir $target_platforms
+        ::StarkitGenerator::Generate_One_Kit $kit $kit_type $starkit_dir $output_dir $vfs_top_dir $target_platforms $embed_tools
         ::StarkitGenerator::Log_Msg "\nGenerating starkit <$kit>, type $kit_type...Done"
     }
 
@@ -272,7 +272,7 @@ proc ::StarkitGenerator::Generate_Kits { sdx_name kit_lst kit_type target_platfo
 
 #=======================================================================
 
-proc ::StarkitGenerator::Generate_One_Kit { kit kit_types starkit_dir output_dir vfs_top_dir target_platforms } {
+proc ::StarkitGenerator::Generate_One_Kit { kit kit_types starkit_dir output_dir vfs_top_dir target_platforms embed_tools } {
 
 
     puts $target_platforms
@@ -313,13 +313,17 @@ proc ::StarkitGenerator::Generate_One_Kit { kit kit_types starkit_dir output_dir
 
     # Creating StarKits
     foreach platform $target_platforms {
-        ::StarkitGenerator::Log_Msg "\nCreating platform specific directory structures and files..."
 
-        set src_files_list [ ::Make${pkg}::Get_Platform_Specific_Files_List $platform $src_dir/difftools/$platform tmp_files ]
-
-        set dst_files_list [ ::StarkitGenerator::Copy_Files_Between_Directories $src_dir/difftools/$platform $kit_dir/difftools $src_files_list ]
-
-        ::StarkitGenerator::Log_Msg "Creating platform specific directory structures and files...Done"
+        if {$embed_tools} {
+            ::StarkitGenerator::Log_Msg "\nCreating platform tools directory structures and files..."
+            set src_files_list [ ::Make${pkg}::Get_Platform_Specific_Files_List $platform $src_dir/difftools/$platform tmp_files ]
+            set dst_files_list [ ::StarkitGenerator::Copy_Files_Between_Directories $src_dir/difftools/$platform $kit_dir/difftools $src_files_list ]
+            ::StarkitGenerator::Log_Msg "Creating platform tools directory structures and files...Done"
+        } else {
+            set tmp_files {}
+            set dst_files_list {}
+            ::StarkitGenerator::Log_Msg "\nCreating platform tools directory structures and files...NOT requested"
+        }
 
         ::StarkitGenerator::Log_Msg "\nGenerating <$kit> for $platform..."
         foreach type $kit_types {
